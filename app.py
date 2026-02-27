@@ -21,9 +21,9 @@ st.title("📊 全市場資金動能與情緒背離四象限圖")
 st.markdown("提供跨市場 (美、台、日) 資金流入與社群聲量對比，捕捉法人低調建倉與散戶過熱訊號。")
 
 # ==========================================
-# 2. 爬蟲函數定義 (加入快取機制，避免重複抓取被鎖)
+# 2. 爬蟲函數定義 (加入快取機制)
 # ==========================================
-@st.cache_data(ttl=3600) # 快取 1 小時，避免頻繁發送請求
+@st.cache_data(ttl=3600)
 def get_dcard_volume(keyword):
     encoded_keyword = urllib.parse.quote(keyword)
     url = f"https://www.dcard.tw/service/api/v2/search/posts?query={encoded_keyword}&forum=stock&limit=30"
@@ -70,56 +70,66 @@ def fetch_market_data():
         main_keyword = info["keywords"][0]
         rate = exchange_rates[market]
         
-        # 抓取金融與歷史動能數據 (直接使用 yfinance 歷史資料計算 X 軸動能，最為穩定)
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period="10d")
             
             if len(hist) >= 6:
+                # 抓取最近一個交易日的數據
                 current_vol = hist['Volume'].iloc[-1]
                 current_price = hist['Close'].iloc[-1]
                 current_value = current_vol * current_price * rate
                 
+                # 抓取前五個交易日的數據作為基期
                 past_vol = hist['Volume'].iloc[-6]
                 past_price = hist['Close'].iloc[-6]
                 past_value = past_vol * past_price * rate
                 
+                # 抓取前兩個交易日的數據，計算單日漲跌幅
+                prev_close = hist['Close'].iloc[-2]
+                daily_return = ((current_price - prev_close) / prev_close) * 100 if prev_close > 0 else 0
+                
                 money_momentum = ((current_value - past_value) / past_value) * 100 if past_value > 0 else 0
             else:
-                money_momentum = 0
+                money_momentum, daily_return = 0, 0
                 
             trading_value_m = round(current_value / 1000000, 2) if 'current_value' in locals() else 0
             
         except:
-            money_momentum, trading_value_m = 0, 0
+            money_momentum, trading_value_m, daily_return = 0, 0, 0
 
-        # 抓取當前聲量數據
+        # 聲量抓取
         dcard_vol = get_dcard_volume(main_keyword) if "TW" in market else 0
         news_vol = get_news_volume(main_keyword)
         total_hype = max((dcard_vol + news_vol), 1)
 
-        # 為了網頁版展示，Y軸聲量動能我們暫時使用當下聲量與一個基準值做對比
-        # （下一階段可再接回 Google Sheets 取得真實歷史聲量）
-        baseline_hype = 10 # 假設基準聲量
+        baseline_hype = 10 
         hype_momentum = ((total_hype - baseline_hype) / baseline_hype) * 100
 
+        # 判定象限與給予對應符號
         if money_momentum > 0 and hype_momentum > 0:
             insight = "🔥 右上：價量齊揚 (熱錢湧入)"
+            emoji = "🔥"
         elif money_momentum > 0 and hype_momentum <= 0:
             insight = "🤫 右下：低調吸金 (法人吃貨)"
+            emoji = "🤫"
         elif money_momentum <= 0 and hype_momentum > 0:
             insight = "⚠️ 左上：聲量背離 (出貨警戒)"
+            emoji = "⚠️"
         else:
             insight = "❄️ 左下：冷門打底 (市場遺忘)"
+            emoji = "❄️"
 
         results.append({
+            "圖表標籤": f"{emoji} {name}",  # 產生帶有符號的標籤供圖表使用
             "名稱": name,
+            "前一交易日漲跌幅 (%)": round(daily_return, 2),
             "資金動能變化 (%)": round(money_momentum, 2),
             "聲量動能變化 (%)": round(hype_momentum, 2),
             "當前總聲量": total_hype,
+            "當日資金熱度 (百萬美元)": trading_value_m,
             "市場": market,
-            "象限洞察": insight,
-            "當日資金熱度(百萬美元)": trading_value_m
+            "象限洞察": insight
         })
 
     return pd.DataFrame(results)
@@ -138,7 +148,8 @@ if st.sidebar.button("🔄 立即更新數據", type="primary"):
         current_time = datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')
         st.success(f"✅ 資料更新完成！(台北時間: {current_time})")
 
-        # 繪製圖表
+        # 繪製圖表 (已更新標籤顯示)
+        
         fig = px.scatter(
             df,
             x="資金動能變化 (%)", 
@@ -146,8 +157,8 @@ if st.sidebar.button("🔄 立即更新數據", type="primary"):
             size="當前總聲量",
             color="象限洞察",
             hover_name="名稱",
-            hover_data=["市場", "當日資金熱度(百萬美元)", "當前總聲量"],
-            text="名稱",
+            hover_data=["市場", "前一交易日漲跌幅 (%)", "當日資金熱度 (百萬美元)", "當前總聲量"],
+            text="圖表標籤", # 這裡改為帶有 emoji 的標籤
             size_max=60,
             template="plotly_dark",
             color_discrete_map={
@@ -161,13 +172,40 @@ if st.sidebar.button("🔄 立即更新數據", type="primary"):
         fig.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
         fig.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
         fig.update_traces(textposition='top center')
-        fig.update_layout(height=600) # 增加網頁圖表高度
+        fig.update_layout(height=600)
 
-        # 在網頁上顯示互動式圖表
         st.plotly_chart(fig, use_container_width=True)
 
-        # 在圖表下方顯示原始數據表格，方便客戶查看精確數字
+        # 顯示資料表與欄位說明
         st.markdown("### 📋 詳細數據清單")
-        st.dataframe(df.sort_values(by="資金動能變化 (%)", ascending=False), use_container_width=True)
+        
+        # 重新排序表格欄位，讓重點數據在前面
+        display_columns = [
+            "圖表標籤", "市場", "前一交易日漲跌幅 (%)", 
+            "資金動能變化 (%)", "聲量動能變化 (%)", 
+            "當前總聲量", "當日資金熱度 (百萬美元)", "象限洞察"
+        ]
+        
+        # 隱藏預設索引(Index)讓表格更乾淨，並依照資金動能排序
+        st.dataframe(
+            df[display_columns].sort_values(by="資金動能變化 (%)", ascending=False), 
+            use_container_width=True,
+            hide_index=True 
+        )
+
+        st.markdown("---")
+        
+        # 新增欄位與來源說明
+        st.markdown("""
+        **💡 數據欄位解讀指南：**
+        * **前一交易日漲跌幅 (%)**：標的在最近一個交易日的收盤表現。早上 8 點檢視時，可作為昨夜美股或昨日台/日股的最終價格參考，搭配異常聲量動能，協助判斷趨勢延續或反轉。
+        * **資金動能變化 (%)**：以近 1 日成交金額對比 5 天前的基準成交金額。正值代表市場真金白銀加速流入，負值代表量縮退潮。
+        * **聲量動能變化 (%)**：當前網路討論熱度與常態基準的比較。暴增代表散戶情緒與媒體關注度極高。
+        * **當前總聲量**：各大社群論壇與財經新聞提及該標的的加總次數（泡泡大小依此決定）。
+        * **當日資金熱度 (百萬美元)**：前一交易日的總成交金額，已將台幣與日圓統一換算為美元，利於跨市場比較資金體量。
+
+        **🔗 資料來源：**
+        `Yahoo Finance` (跨國股價與交易量) | `Dcard 股票版` (台股社群聲量) | `Google News RSS` (工商時報、經濟日報等媒體聲量)
+        """)
 else:
     st.info("👈 請點擊左側「立即更新數據」按鈕開始分析。")
