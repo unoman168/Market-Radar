@@ -56,13 +56,45 @@ def get_news_volume(keyword):
 
 # 4. 抓取最新數據並比對歷史
 stock_pool = [
+    # === [核心 AI 與七巨頭] ===
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
+    {"ticker": "AAPL", "name": "蘋果", "market": "US", "keywords": ["AAPL"]},
+    {"ticker": "MSFT", "name": "微軟", "market": "US", "keywords": ["MSFT"]},
+    {"ticker": "GOOGL", "name": "Google", "market": "US", "keywords": ["GOOGL"]},
+    {"ticker": "META", "name": "Meta", "market": "US", "keywords": ["META"]},
+    {"ticker": "AMZN", "name": "亞馬遜", "market": "US", "keywords": ["AMZN"]},
     {"ticker": "TSLA", "name": "特斯拉", "market": "US", "keywords": ["TSLA"]},
+    
+    # === [關鍵半導體與矽智財] ===
+    {"ticker": "TSM", "name": "台積電ADR", "market": "US", "keywords": ["TSM"]},
+    {"ticker": "AVGO", "name": "博通", "market": "US", "keywords": ["AVGO"]},
+    {"ticker": "AMD", "name": "超微", "market": "US", "keywords": ["AMD"]},
+    {"ticker": "ARM", "name": "安謀", "market": "US", "keywords": ["ARM"]},
+    
+    # === [AI 基礎設施、散熱與能源] ===
     {"ticker": "VRT", "name": "Vertiv", "market": "US", "keywords": ["VRT"]},
+    {"ticker": "SMR", "name": "NuScale", "market": "US", "keywords": ["SMR"]},
+    {"ticker": "CEG", "name": "Constellation", "market": "US", "keywords": ["CEG"]},
+    
+    # === [光通訊與矽光子] ===
+    {"ticker": "AAOI", "name": "應用光電", "market": "US", "keywords": ["AAOI"]},
+    {"ticker": "LITE", "name": "Lumentum", "market": "US", "keywords": ["LITE"]},
+    {"ticker": "COHR", "name": "Coherent", "market": "US", "keywords": ["COHR"]},
+    
+    # === [全球金融與價值型] ===
+    {"ticker": "JPM", "name": "摩根大通", "market": "US", "keywords": ["JPM"]},
+    {"ticker": "BRK-B", "name": "波克夏", "market": "US", "keywords": ["BRK-B"]},
+    
+    # === [台股對應關鍵供應鏈] ===
     {"ticker": "2330.TW", "name": "台積電", "market": "TW", "keywords": ["台積電"]},
     {"ticker": "2317.TW", "name": "鴻海", "market": "TW", "keywords": ["鴻海"]},
+    {"ticker": "2382.TW", "name": "廣達", "market": "TW", "keywords": ["廣達"]},
+    {"ticker": "3231.TW", "name": "緯創", "market": "TW", "keywords": ["緯創"]},
     {"ticker": "3037.TW", "name": "欣興", "market": "TW", "keywords": ["欣興"]},
-    {"ticker": "7203.T", "name": "豐田", "market": "JP", "keywords": ["豐田"]}
+    {"ticker": "3321.TW", "name": "同泰", "market": "TW", "keywords": ["同泰"]},
+    {"ticker": "2308.TW", "name": "台達電", "market": "TW", "keywords": ["台達電"]},
+    {"ticker": "3017.TW", "name": "奇鋐", "market": "TW", "keywords": ["奇鋐"]},
+    {"ticker": "3324.TW", "name": "雙鴻", "market": "TW", "keywords": ["雙鴻"]}
 ]
 
 tw_tz = pytz.timezone('Asia/Taipei')
