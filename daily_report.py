@@ -130,7 +130,6 @@ img_path = "radar.jpg"
 fig.write_image(img_path, scale=2)
 print("圖表已生成，準備上傳圖床...")
 
-# 6. 上傳圖片至免費圖床 (Catbox) 取得公開網址
 # 6. 上傳圖片至免費圖床取得公開網址 (加入備援機制與超時保護)
 def upload_image(file_path):
     # 方案 A: 嘗試使用 Catbox (設定 15 秒超時)
@@ -139,7 +138,6 @@ def upload_image(file_path):
         url = "https://catbox.moe/user/api.php"
         data = {"reqtype": "fileupload"}
         with open(file_path, "rb") as f:
-            # 加上 timeout=15，避免無止盡等待
             res = requests.post(url, data=data, files={"fileToUpload": f}, timeout=15)
         if res.status_code == 200:
             return res.text
@@ -153,7 +151,6 @@ def upload_image(file_path):
         with open(file_path, "rb") as f:
             img_data = base64.b64encode(f.read()).decode('utf-8')
         
-        # 使用公開的免費 API Key
         api_url = "https://freeimage.host/api/1/upload"
         payload = {
             "key": "6d207e02198a847aa98d0a2a901485a5", 
@@ -177,7 +174,6 @@ if img_url:
     line_api = "https://api.line.me/v2/bot/message/push"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
     
-    # 準備一段重點洞察文字
     smart_money = [row['名稱'] for row in today_results if "低調吸金" in row['象限洞察']]
     alert_msg = f"🟢 今日主力悄悄吃貨標的：{', '.join(smart_money)}" if smart_money else "無特別低調吸金標的"
     
@@ -195,5 +191,3 @@ if img_url:
         print(f"發送 LINE 失敗: {e}")
 else:
     print("圖片上傳失敗，無法發送 LINE。請稍後再試。")
-else:
-    print("圖片上傳失敗，無法發送 LINE。")
