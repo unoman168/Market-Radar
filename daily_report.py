@@ -125,7 +125,15 @@ fig = px.scatter(
 fig.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
 fig.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
 fig.update_traces(textposition='top center')
-
+# 👇👇👇 把上面的優化程式碼貼在這裡 👇👇👇
+fig.update_layout(margin=dict(b=80))
+fig.add_annotation(
+    text="<b>【象限定義】</b> 🔥 右上：價量齊揚 (熱錢湧入) ｜ 🤫 右下：低調吸金 (法人吃貨) ｜ ⚠️ 左上：聲量背離 (出貨警戒) ｜ ❄️ 左下：冷門打底 (市場遺忘)",
+    xref="paper", yref="paper",
+    x=0.5, y=-0.18, 
+    showarrow=False,
+    font=dict(size=12, color="#A0A0A0"),
+    xanchor="center", yanchor="top"
 img_path = "radar.jpg"
 fig.write_image(img_path, scale=2)
 print("圖表已生成，準備上傳圖床...")
