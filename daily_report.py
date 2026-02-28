@@ -131,18 +131,49 @@ fig.write_image(img_path, scale=2)
 print("圖表已生成，準備上傳圖床...")
 
 # 6. 上傳圖片至免費圖床 (Catbox) 取得公開網址
+# 6. 上傳圖片至免費圖床取得公開網址 (加入備援機制與超時保護)
 def upload_image(file_path):
-    url = "https://catbox.moe/user/api.php"
-    data = {"reqtype": "fileupload"}
-    with open(file_path, "rb") as f:
-        res = requests.post(url, data=data, files={"fileToUpload": f})
-    return res.text if res.status_code == 200 else None
+    # 方案 A: 嘗試使用 Catbox (設定 15 秒超時)
+    try:
+        print("正在嘗試上傳至 Catbox...")
+        url = "https://catbox.moe/user/api.php"
+        data = {"reqtype": "fileupload"}
+        with open(file_path, "rb") as f:
+            # 加上 timeout=15，避免無止盡等待
+            res = requests.post(url, data=data, files={"fileToUpload": f}, timeout=15)
+        if res.status_code == 200:
+            return res.text
+    except Exception as e:
+        print(f"⚠️ Catbox 上傳超時或失敗，啟動備用圖床...")
+
+    # 方案 B: 嘗試使用 Freeimage.host 備用圖床
+    try:
+        print("正在嘗試上傳至 Freeimage.host...")
+        import base64
+        with open(file_path, "rb") as f:
+            img_data = base64.b64encode(f.read()).decode('utf-8')
+        
+        # 使用公開的免費 API Key
+        api_url = "https://freeimage.host/api/1/upload"
+        payload = {
+            "key": "6d207e02198a847aa98d0a2a901485a5", 
+            "action": "upload", 
+            "source": img_data, 
+            "format": "json"
+        }
+        res = requests.post(api_url, data=payload, timeout=15)
+        if res.status_code == 200:
+            return res.json()['image']['url']
+    except Exception as e:
+        print(f"❌ 備用圖床也失敗: {e}")
+        
+    return None
 
 img_url = upload_image(img_path)
 
 # 7. 透過 LINE Messaging API 發送給自己
 if img_url:
-    print(f"圖片上傳成功: {img_url}")
+    print(f"✅ 圖片上傳成功: {img_url}")
     line_api = "https://api.line.me/v2/bot/message/push"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
     
@@ -157,7 +188,12 @@ if img_url:
             {"type": "image", "originalContentUrl": img_url, "previewImageUrl": img_url}
         ]
     }
-    res = requests.post(line_api, headers=headers, json=payload)
-    print("LINE 發送狀態:", res.status_code, res.text)
+    try:
+        res = requests.post(line_api, headers=headers, json=payload, timeout=10)
+        print("LINE 發送狀態:", res.status_code, res.text)
+    except Exception as e:
+        print(f"發送 LINE 失敗: {e}")
+else:
+    print("圖片上傳失敗，無法發送 LINE。請稍後再試。")
 else:
     print("圖片上傳失敗，無法發送 LINE。")
