@@ -125,7 +125,8 @@ fig = px.scatter(
 fig.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
 fig.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
 fig.update_traces(textposition='top center')
-# 👇👇👇 把上面的優化程式碼貼在這裡 👇👇👇
+
+# 👇 這是剛剛新增的圖表底部註解 👇
 fig.update_layout(margin=dict(b=80))
 fig.add_annotation(
     text="<b>【象限定義】</b> 🔥 右上：價量齊揚 (熱錢湧入) ｜ 🤫 右下：低調吸金 (法人吃貨) ｜ ⚠️ 左上：聲量背離 (出貨警戒) ｜ ❄️ 左下：冷門打底 (市場遺忘)",
@@ -134,13 +135,14 @@ fig.add_annotation(
     showarrow=False,
     font=dict(size=12, color="#A0A0A0"),
     xanchor="center", yanchor="top"
+)
+
 img_path = "radar.jpg"
 fig.write_image(img_path, scale=2)
 print("圖表已生成，準備上傳圖床...")
 
 # 6. 上傳圖片至免費圖床取得公開網址 (加入備援機制與超時保護)
 def upload_image(file_path):
-    # 方案 A: 嘗試使用 Catbox (設定 15 秒超時)
     try:
         print("正在嘗試上傳至 Catbox...")
         url = "https://catbox.moe/user/api.php"
@@ -152,7 +154,6 @@ def upload_image(file_path):
     except Exception as e:
         print(f"⚠️ Catbox 上傳超時或失敗，啟動備用圖床...")
 
-    # 方案 B: 嘗試使用 Freeimage.host 備用圖床
     try:
         print("正在嘗試上傳至 Freeimage.host...")
         import base64
