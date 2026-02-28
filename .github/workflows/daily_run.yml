@@ -2,9 +2,8 @@ name: 晨會戰情機器人自動排程
 
 on:
   schedule:
-    # 這是 UTC 時間。23:15 UTC 等於台灣時間早上 07:15
     - cron: '15 23 * * *'
-  workflow_dispatch: # 保留這個按鈕，讓你可以隨時手動點擊測試
+  workflow_dispatch: 
 
 jobs:
   run-report:
@@ -21,13 +20,14 @@ jobs:
       - name: 安裝中文字型 (解決圖表亂碼)
         run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
 
-      - name: 安裝所需套件
+      - name: 安裝所需套件 (新增 Google AI 套件)
         run: |
-          pip install yfinance pandas plotly requests feedparser gspread google-auth pytz kaleido==0.2.1
+          pip install yfinance pandas plotly requests feedparser gspread google-auth pytz kaleido==0.2.1 google-generativeai
           
       - name: 執行報表與發送 LINE
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python daily_report.py
