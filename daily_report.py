@@ -8,12 +8,13 @@ import requests
 import pandas as pd
 import yfinance as yf
 import plotly.express as px
+import plotly.graph_objects as go
 import feedparser
 from google.oauth2.service_account import Credentials
 import gspread
 import google.generativeai as genai
 
-print("啟動【AI 賦能版】法人戰情機器人...")
+print("啟動【雙圖表 AI 賦能版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -21,7 +22,6 @@ LINE_USER_ID = os.getenv('LINE_USER_ID')
 gcp_sa_key_json = os.getenv('GCP_SA_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-# 設定 Google AI
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
@@ -61,9 +61,7 @@ def get_dcard_volume(keyword):
     except:
         return 0
 
-# --- 模組四：財報日曆預警功能 ---
 def check_upcoming_earnings(ticker_list):
-    print("掃描美股財報日曆中...")
     upcoming = []
     today = datetime.now(pytz.timezone('US/Eastern')).date()
     for tk in ticker_list:
@@ -73,13 +71,13 @@ def check_upcoming_earnings(ticker_list):
             if dates is not None and not dates.empty:
                 next_date = dates.index[0].date()
                 delta = (next_date - today).days
-                if 0 <= delta <= 7:  # 7天內發布財報
+                if 0 <= delta <= 7:
                     upcoming.append(f"{tk} ({next_date.strftime('%m/%d')})")
         except:
             pass
     return upcoming
 
-# 4. 抓取數據
+# 4. 抓取數據 (28檔 13F 法人名單)
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
     {"ticker": "AAPL", "name": "蘋果", "market": "US", "keywords": ["AAPL"]},
@@ -165,16 +163,15 @@ for info in stock_pool:
         "當前總聲量": total_hype, "象限洞察": insight
     })
 
+# 將今日數據寫入 Google Sheets
 worksheet.append_rows(new_rows_for_db)
 
-# 執行財報預警
+# 財報預警與 AI 快評
 earnings_alerts = check_upcoming_earnings(us_tickers_for_earnings)
 earnings_msg = f"📅 7日內財報預警：{', '.join(earnings_alerts)}" if earnings_alerts else "📅 7日內無重點巨頭財報。"
 
-# --- 模組一：AI 語意情緒分析 ---
 ai_insight_msg = "🤖 AI 分析：今日市場資訊量不足，無特別情緒波動。"
 if GEMINI_API_KEY and hottest_stock["hype"] > 0:
-    print(f"呼叫 AI 分析今日焦點: {hottest_stock['name']}")
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         titles_text = "\n".join(hottest_stock["titles"])
@@ -185,75 +182,128 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0:
         print(f"AI 呼叫失敗: {e}")
 
 # ==========================================
-# 5. 繪圖與清單整理 (本次更新重點)
+# 5. 繪製 Page 1: 動能雷達圖
 # ==========================================
 df_plot = pd.DataFrame(today_results)
-
-# 自動把 28 檔股票依照象限分門別類
 q_lists = {"🔥 右上：價量齊揚": [], "🤫 右下：低調吸金": [], "⚠️ 左上：聲量背離": [], "❄️ 左下：冷門打底": [], "🆕 首次建檔": []}
-for row in today_results:
-    q_lists[row["象限洞察"]].append(row["名稱"])
+for row in today_results: q_lists[row["象限洞察"]].append(row["名稱"])
 
-# 將分類結果組合成文字字串 (包含換行符號 <br>)
+def wrap_list(stock_list, n=8):
+    chunks = [stock_list[i:i + n] for i in range(0, len(stock_list), n)]
+    return '<br>　　　　　'.join([', '.join(c) for c in chunks])
+
 list_text = "<br><br><b>【各象限標的清單】</b><br>"
-if q_lists["🔥 右上：價量齊揚"]: list_text += f"🔥 價量齊揚：{', '.join(q_lists['🔥 右上：價量齊揚'])}<br>"
-if q_lists["🤫 右下：低調吸金"]: list_text += f"🤫 低調吸金：{', '.join(q_lists['🤫 右下：低調吸金'])}<br>"
-if q_lists["⚠️ 左上：聲量背離"]: list_text += f"⚠️ 聲量背離：{', '.join(q_lists['⚠️ 左上：聲量背離'])}<br>"
-if q_lists["❄️ 左下：冷門打底"]: list_text += f"❄️ 冷門打底：{', '.join(q_lists['❄️ 左下：冷門打底'])}<br>"
-if q_lists["🆕 首次建檔"]: list_text += f"🆕 首次建檔：{', '.join(q_lists['🆕 首次建檔'])}"
+if q_lists["🔥 右上：價量齊揚"]: list_text += f"🔥 價量齊揚：{wrap_list(q_lists['🔥 右上：價量齊揚'])}<br>"
+if q_lists["🤫 右下：低調吸金"]: list_text += f"🤫 低調吸金：{wrap_list(q_lists['🤫 右下：低調吸金'])}<br>"
+if q_lists["⚠️ 左上：聲量背離"]: list_text += f"⚠️ 聲量背離：{wrap_list(q_lists['⚠️ 左上：聲量背離'])}<br>"
+if q_lists["❄️ 左下：冷門打底"]: list_text += f"❄️ 冷門打底：{wrap_list(q_lists['❄️ 左下：冷門打底'])}<br>"
+if q_lists["🆕 首次建檔"]: list_text += f"🆕 首次建檔：{wrap_list(q_lists['🆕 首次建檔'])}"
 
-fig = px.scatter(
+fig1 = px.scatter(
     df_plot, x="資金動能變化 (%)", y="聲量動能變化 (%)", size="當前總聲量", color="象限洞察",
-    text="圖表標籤", title=f"【VIP晨會戰情】動能四象限與AI情緒解析<br>更新時間: {current_time}",
+    text="圖表標籤", title=f"【Page 1】動能四象限與AI情緒解析<br>更新時間: {current_time}",
     size_max=60, template="plotly_dark",
     color_discrete_map={"🔥 右上：價量齊揚": "#EF553B", "🤫 右下：低調吸金": "#00CC96",
                         "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA", "🆕 首次建檔": "#808080"}
 )
-fig.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
-fig.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
-fig.update_traces(textposition='top center')
+fig1.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
+fig1.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
+fig1.update_traces(textposition='top center')
+fig1.update_layout(margin=dict(b=300))
 
-# 大幅增加圖表下方的邊界空間 (margin b=220)，用來容納名單清單
-fig.update_layout(margin=dict(b=220))
-
-# 將原本的象限定義，與新的分類清單合併在一起，並靠左對齊
 footer_text = "<b>【象限定義】</b> 🔥 右上：價量齊揚 ｜ 🤫 右下：低調吸金 ｜ ⚠️ 左上：聲量背離 ｜ ❄️ 左下：冷門打底" + list_text
-fig.add_annotation(
-    text=footer_text,
-    xref="paper", yref="paper", 
-    x=0, y=-0.12,  # x=0 代表切齊圖表最左邊
-    showarrow=False, 
-    font=dict(size=12, color="#A0A0A0"), 
-    xanchor="left", yanchor="top",
-    align="left"
-)
+fig1.add_annotation(text=footer_text, xref="paper", yref="paper", x=0, y=-0.22, showarrow=False, font=dict(size=12, color="#A0A0A0"), xanchor="left", yanchor="top", align="left")
 
-img_path = "radar.jpg"
-fig.write_image(img_path, scale=2)
+img_path_1 = "radar_page1.jpg"
+fig1.write_image(img_path_1, scale=2)
 
-# 6. 上傳圖床
+# ==========================================
+# 6. 繪製 Page 2: 五日動能軌跡表 (熱力圖表格)
+# ==========================================
+print("正在計算五日歷史軌跡...")
+columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
+df_today = pd.DataFrame(new_rows_for_db, columns=columns)
+df_all = pd.concat([df_history, df_today], ignore_index=True)
+df_all['日期'] = pd.to_datetime(df_all['日期'])
+df_all = df_all.sort_values(by=['代號', '日期'])
+
+table_data = []
+for info in stock_pool:
+    tk = info["ticker"]
+    name = info["name"]
+    df_sub = df_all[df_all['代號'] == tk].tail(6) # 抓取最近 6 筆來算 5 天動能
+    
+    quadrants = ["⚪", "⚪", "⚪", "⚪", "⚪"] # 預設無資料
+    
+    if len(df_sub) >= 2:
+        vals = df_sub['成交金額_百萬美元'].values
+        hypes = df_sub['總聲量'].values
+        
+        for i in range(1, len(df_sub)):
+            money_mom = ((vals[i] - vals[i-1]) / vals[i-1] * 100) if vals[i-1] > 0 else 0
+            hype_mom = ((hypes[i] - hypes[i-1]) / hypes[i-1] * 100) if hypes[i-1] > 0 else 0
+            
+            q = "⚪"
+            if money_mom > 0 and hype_mom > 0: q = "🔥"
+            elif money_mom > 0 and hype_mom <= 0: q = "🤫"
+            elif money_mom <= 0 and hype_mom > 0: q = "⚠️"
+            else: q = "❄️"
+            
+            # 從最右邊(Today)開始填入軌跡
+            target_idx = 5 - (len(df_sub) - i)
+            if 0 <= target_idx < 5:
+                quadrants[target_idx] = q
+                
+    table_data.append([name] + quadrants)
+
+headers = ['<b>標的名稱</b>', '<b>T-4 (天前)</b>', '<b>T-3 (天前)</b>', '<b>T-2 (前天)</b>', '<b>T-1 (昨天)</b>', '<b>Today (今日)</b>']
+fig2 = go.Figure(data=[go.Table(
+    columnwidth=[120, 80, 80, 80, 80, 80],
+    header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
+    cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=18), align='center', height=35)
+)])
+fig2.update_layout(title="【Page 2】五日資金動能演變軌跡表", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20))
+
+img_path_2 = "trend_page2.jpg"
+fig2.write_image(img_path_2, scale=2)
+
+# ==========================================
+# 7. 上傳圖床並發送雙圖表 LINE 訊息
+# ==========================================
 def upload_image(file_path):
     try:
         res = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"}, files={"fileToUpload": open(file_path, "rb")}, timeout=15)
-        return res.text if res.status_code == 200 else None
+        if res.status_code == 200: return res.text
+    except:
+        pass
+    
+    # 備用圖床
+    try:
+        import base64
+        with open(file_path, "rb") as f:
+            img_data = base64.b64encode(f.read()).decode('utf-8')
+        res = requests.post("https://freeimage.host/api/1/upload", data={"key": "6d207e02198a847aa98d0a2a901485a5", "action": "upload", "source": img_data, "format": "json"}, timeout=15)
+        if res.status_code == 200: return res.json()['image']['url']
     except:
         return None
-img_url = upload_image(img_path)
 
-# 7. 發送 LINE
-if img_url:
+print("正在上傳 Page 1...")
+img_url_1 = upload_image(img_path_1)
+print("正在上傳 Page 2...")
+img_url_2 = upload_image(img_path_2)
+
+if img_url_1 or img_url_2:
     print("準備發送終極戰情 LINE...")
     smart_money = [row['名稱'] for row in today_results if "低調吸金" in row['象限洞察']]
     money_msg = f"🟢 今日主力悄悄吃貨標的：{', '.join(smart_money)}" if smart_money else "無特別低調吸金標的"
-    
     final_text = f"早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}"
     
-    payload = {
-        "to": LINE_USER_ID,
-        "messages": [
-            {"type": "text", "text": final_text},
-            {"type": "image", "originalContentUrl": img_url, "previewImageUrl": img_url}
-        ]
-    }
+    messages = [{"type": "text", "text": final_text}]
+    if img_url_1: messages.append({"type": "image", "originalContentUrl": img_url_1, "previewImageUrl": img_url_1})
+    if img_url_2: messages.append({"type": "image", "originalContentUrl": img_url_2, "previewImageUrl": img_url_2})
+    
+    payload = {"to": LINE_USER_ID, "messages": messages}
     requests.post("https://api.line.me/v2/bot/message/push", headers={"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, json=payload, timeout=10)
-    print("LINE 訊息發送完畢！")
+    print("✅ LINE 雙圖表訊息發送完畢！")
+else:
+    print("❌ 圖片上傳失敗，無法發送 LINE。")
