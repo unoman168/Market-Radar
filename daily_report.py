@@ -81,7 +81,6 @@ def check_upcoming_earnings(ticker_list):
 
 # 4. 抓取數據
 stock_pool = [
-    # === [核心 AI 與七巨頭] ===
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
     {"ticker": "AAPL", "name": "蘋果", "market": "US", "keywords": ["AAPL"]},
     {"ticker": "MSFT", "name": "微軟", "market": "US", "keywords": ["MSFT"]},
@@ -89,28 +88,18 @@ stock_pool = [
     {"ticker": "META", "name": "Meta", "market": "US", "keywords": ["META"]},
     {"ticker": "AMZN", "name": "亞馬遜", "market": "US", "keywords": ["AMZN"]},
     {"ticker": "TSLA", "name": "特斯拉", "market": "US", "keywords": ["TSLA"]},
-    
-    # === [關鍵半導體與矽智財] ===
     {"ticker": "TSM", "name": "台積電ADR", "market": "US", "keywords": ["TSM"]},
     {"ticker": "AVGO", "name": "博通", "market": "US", "keywords": ["AVGO"]},
     {"ticker": "AMD", "name": "超微", "market": "US", "keywords": ["AMD"]},
     {"ticker": "ARM", "name": "安謀", "market": "US", "keywords": ["ARM"]},
-    
-    # === [AI 基礎設施、散熱與能源] ===
     {"ticker": "VRT", "name": "Vertiv", "market": "US", "keywords": ["VRT"]},
     {"ticker": "SMR", "name": "NuScale", "market": "US", "keywords": ["SMR"]},
     {"ticker": "CEG", "name": "Constellation", "market": "US", "keywords": ["CEG"]},
-    
-    # === [光通訊與矽光子] ===
     {"ticker": "AAOI", "name": "應用光電", "market": "US", "keywords": ["AAOI"]},
     {"ticker": "LITE", "name": "Lumentum", "market": "US", "keywords": ["LITE"]},
     {"ticker": "COHR", "name": "Coherent", "market": "US", "keywords": ["COHR"]},
-    
-    # === [全球金融與價值型] ===
     {"ticker": "JPM", "name": "摩根大通", "market": "US", "keywords": ["JPM"]},
     {"ticker": "BRK-B", "name": "波克夏", "market": "US", "keywords": ["BRK-B"]},
-    
-    # === [台股對應關鍵供應鏈] ===
     {"ticker": "2330.TW", "name": "台積電", "market": "TW", "keywords": ["台積電"]},
     {"ticker": "2317.TW", "name": "鴻海", "market": "TW", "keywords": ["鴻海"]},
     {"ticker": "2382.TW", "name": "廣達", "market": "TW", "keywords": ["廣達"]},
@@ -147,7 +136,6 @@ for info in stock_pool:
     news_info = get_news_data(kw)
     total_hype = max((get_dcard_volume(kw) if market == "TW" else 0) + news_info["count"], 1)
     
-    # 紀錄今日最熱門標的，留給 AI 分析
     if total_hype > hottest_stock["hype"] and len(news_info["titles"]) > 0:
         hottest_stock = {"name": name, "hype": total_hype, "titles": news_info["titles"]}
 
@@ -196,8 +184,24 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0:
     except Exception as e:
         print(f"AI 呼叫失敗: {e}")
 
-# 5. 繪圖
+# ==========================================
+# 5. 繪圖與清單整理 (本次更新重點)
+# ==========================================
 df_plot = pd.DataFrame(today_results)
+
+# 自動把 28 檔股票依照象限分門別類
+q_lists = {"🔥 右上：價量齊揚": [], "🤫 右下：低調吸金": [], "⚠️ 左上：聲量背離": [], "❄️ 左下：冷門打底": [], "🆕 首次建檔": []}
+for row in today_results:
+    q_lists[row["象限洞察"]].append(row["名稱"])
+
+# 將分類結果組合成文字字串 (包含換行符號 <br>)
+list_text = "<br><br><b>【各象限標的清單】</b><br>"
+if q_lists["🔥 右上：價量齊揚"]: list_text += f"🔥 價量齊揚：{', '.join(q_lists['🔥 右上：價量齊揚'])}<br>"
+if q_lists["🤫 右下：低調吸金"]: list_text += f"🤫 低調吸金：{', '.join(q_lists['🤫 右下：低調吸金'])}<br>"
+if q_lists["⚠️ 左上：聲量背離"]: list_text += f"⚠️ 聲量背離：{', '.join(q_lists['⚠️ 左上：聲量背離'])}<br>"
+if q_lists["❄️ 左下：冷門打底"]: list_text += f"❄️ 冷門打底：{', '.join(q_lists['❄️ 左下：冷門打底'])}<br>"
+if q_lists["🆕 首次建檔"]: list_text += f"🆕 首次建檔：{', '.join(q_lists['🆕 首次建檔'])}"
+
 fig = px.scatter(
     df_plot, x="資金動能變化 (%)", y="聲量動能變化 (%)", size="當前總聲量", color="象限洞察",
     text="圖表標籤", title=f"【VIP晨會戰情】動能四象限與AI情緒解析<br>更新時間: {current_time}",
@@ -208,10 +212,20 @@ fig = px.scatter(
 fig.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
 fig.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
 fig.update_traces(textposition='top center')
-fig.update_layout(margin=dict(b=80))
+
+# 大幅增加圖表下方的邊界空間 (margin b=220)，用來容納名單清單
+fig.update_layout(margin=dict(b=220))
+
+# 將原本的象限定義，與新的分類清單合併在一起，並靠左對齊
+footer_text = "<b>【象限定義】</b> 🔥 右上：價量齊揚 ｜ 🤫 右下：低調吸金 ｜ ⚠️ 左上：聲量背離 ｜ ❄️ 左下：冷門打底" + list_text
 fig.add_annotation(
-    text="<b>【象限定義】</b> 🔥 右上：價量齊揚 ｜ 🤫 右下：低調吸金 ｜ ⚠️ 左上：聲量背離 ｜ ❄️ 左下：冷門打底",
-    xref="paper", yref="paper", x=0.5, y=-0.18, showarrow=False, font=dict(size=12, color="#A0A0A0"), xanchor="center", yanchor="top"
+    text=footer_text,
+    xref="paper", yref="paper", 
+    x=0, y=-0.12,  # x=0 代表切齊圖表最左邊
+    showarrow=False, 
+    font=dict(size=12, color="#A0A0A0"), 
+    xanchor="left", yanchor="top",
+    align="left"
 )
 
 img_path = "radar.jpg"
@@ -232,7 +246,6 @@ if img_url:
     smart_money = [row['名稱'] for row in today_results if "低調吸金" in row['象限洞察']]
     money_msg = f"🟢 今日主力悄悄吃貨標的：{', '.join(smart_money)}" if smart_money else "無特別低調吸金標的"
     
-    # 將 AI 快評與財報預警組合進 LINE 訊息
     final_text = f"早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}"
     
     payload = {
