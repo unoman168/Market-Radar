@@ -12,10 +12,10 @@ import plotly.graph_objects as go
 import feedparser
 from google.oauth2.service_account import Credentials
 import gspread
-import google.generativeai as genai
+from google import genai  # 🌟 換成 Google 最新官方套件
 import praw
 
-print("啟動【跨國巨頭 38 檔：AI 賦能 + Reddit 雙引擎版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：新版 AI 賦能 + Reddit 雙引擎版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -24,9 +24,6 @@ gcp_sa_key_json = os.getenv('GCP_SA_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 REDDIT_CLIENT_ID = os.getenv('REDDIT_CLIENT_ID')
 REDDIT_CLIENT_SECRET = os.getenv('REDDIT_CLIENT_SECRET')
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 # 初始化 Reddit API
 reddit = None
@@ -105,7 +102,6 @@ def check_upcoming_earnings(ticker_list):
 # 4. 抓取數據 (38檔 跨洲際法人名單)
 # ==========================================
 stock_pool = [
-    # === [核心 AI 與七巨頭] ===
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
     {"ticker": "AAPL", "name": "蘋果", "market": "US", "keywords": ["AAPL"]},
     {"ticker": "MSFT", "name": "微軟", "market": "US", "keywords": ["MSFT"]},
@@ -113,30 +109,20 @@ stock_pool = [
     {"ticker": "META", "name": "Meta", "market": "US", "keywords": ["META"]},
     {"ticker": "AMZN", "name": "亞馬遜", "market": "US", "keywords": ["AMZN"]},
     {"ticker": "TSLA", "name": "特斯拉", "market": "US", "keywords": ["TSLA"]},
-    
-    # === [關鍵半導體與矽智財] ===
     {"ticker": "TSM", "name": "台積電ADR", "market": "US", "keywords": ["TSM"]},
     {"ticker": "AVGO", "name": "博通", "market": "US", "keywords": ["AVGO"]},
     {"ticker": "AMD", "name": "超微", "market": "US", "keywords": ["AMD"]},
     {"ticker": "ARM", "name": "安謀", "market": "US", "keywords": ["ARM"]},
     {"ticker": "MU", "name": "美光", "market": "US", "keywords": ["MU"]},
-    
-    # === [AI 基礎設施、散熱與能源] ===
     {"ticker": "VRT", "name": "Vertiv", "market": "US", "keywords": ["VRT"]},
     {"ticker": "SMR", "name": "NuScale", "market": "US", "keywords": ["SMR"]},
     {"ticker": "CEG", "name": "Constellation", "market": "US", "keywords": ["CEG"]},
-    
-    # === [光通訊與矽光子] ===
     {"ticker": "AAOI", "name": "應用光電", "market": "US", "keywords": ["AAOI"]},
     {"ticker": "LITE", "name": "Lumentum", "market": "US", "keywords": ["LITE"]},
     {"ticker": "COHR", "name": "Coherent", "market": "US", "keywords": ["COHR"]},
-    
-    # === [全球金融與加密資產] ===
     {"ticker": "JPM", "name": "摩根大通", "market": "US", "keywords": ["JPM"]},
     {"ticker": "BRK-B", "name": "波克夏", "market": "US", "keywords": ["BRK-B"]},
     {"ticker": "COIN", "name": "Coinbase", "market": "US", "keywords": ["COIN"]},
-    
-    # === [台股對應關鍵供應鏈] ===
     {"ticker": "2330.TW", "name": "台積電", "market": "TW", "keywords": ["台積電"]},
     {"ticker": "2317.TW", "name": "鴻海", "market": "TW", "keywords": ["鴻海"]},
     {"ticker": "2382.TW", "name": "廣達", "market": "TW", "keywords": ["廣達"]},
@@ -149,8 +135,6 @@ stock_pool = [
     {"ticker": "2408.TW", "name": "南亞科", "market": "TW", "keywords": ["南亞科"]},
     {"ticker": "6223.TW", "name": "旺矽", "market": "TW", "keywords": ["旺矽"]},
     {"ticker": "6446.TW", "name": "藥華藥", "market": "TW", "keywords": ["藥華藥"]},
-    
-    # === [日韓亞洲重點指標股] ===
     {"ticker": "005930.KS", "name": "三星電子", "market": "KR", "keywords": ["三星", "005930"]},
     {"ticker": "5801.T", "name": "古河電工", "market": "JP", "keywords": ["古河電工", "5801"]},
     {"ticker": "5016.T", "name": "JX金屬", "market": "JP", "keywords": ["JX金屬", "5016"]},
@@ -162,7 +146,6 @@ tw_tz = pytz.timezone('Asia/Taipei')
 today_str = datetime.now(tw_tz).strftime('%Y-%m-%d')
 current_time = datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')
 
-# 💡 匯率轉換矩陣 (加入日圓與韓元換算美元基準)
 exchange_rates = {"US": 1.0, "TW": 1/32.0, "JP": 1/150.0, "KR": 1/1350.0}
 
 today_results = []
@@ -179,7 +162,6 @@ for info in stock_pool:
         stock = yf.Ticker(ticker)
         fast_info = stock.fast_info
         current_price = fast_info.last_price
-        # 將成交金額統一轉換為百萬美元 (USD Millions)
         trading_value_m = round((fast_info.last_volume * current_price * rate) / 1000000, 2)
         
         yf_news = stock.news
@@ -193,13 +175,11 @@ for info in stock_pool:
     combined_titles = yf_titles + news_info["titles"]
     combined_count = yf_count + news_info["count"]
     
-    # 💡 聲量分流引擎
     if market == "TW":
         forum_count = get_dcard_volume(kw)
     elif market == "US":
         forum_count = get_reddit_volume(kw)
     else:
-        # 日韓股主要依賴 Yahoo 新聞與 Google News，避免抓到無關論壇資訊
         forum_count = 0 
 
     total_hype = max(forum_count + combined_count, 1)
@@ -241,13 +221,18 @@ earnings_msg = f"📅 7日內財報預警：{', '.join(earnings_alerts)}" if ear
 ai_insight_msg = "🤖 AI 分析：今日市場資訊量不足，無特別情緒波動。"
 if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"]) > 0:
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 🌟 換上最新的 google-genai 呼叫語法與 Gemini 2.5 Flash 模型
+        client = genai.Client(api_key=GEMINI_API_KEY)
         titles_text = "\n".join(hottest_stock["titles"])
         prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞標題，給出一段50字以內的極簡『市場情緒快評』，並標示整體情緒為(偏多/偏空/中立/震盪)：\n{titles_text}"
-        response = model.generate_content(prompt)
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
         ai_insight_msg = f"🤖 AI 晨間快評【焦點：{hottest_stock['name']}】\n{response.text.strip()}"
     except Exception as e:
-        pass
+        print(f"AI 呼叫失敗: {e}")
 
 # ==========================================
 # 5. 繪製 Page 1: 動能雷達圖 
@@ -287,7 +272,6 @@ y_pad = abs(y_max - y_min) * 0.2 + 5
 fig1.update_xaxes(range=[x_min - x_pad, x_max + x_pad])
 fig1.update_yaxes(range=[y_min - y_pad, y_max + y_pad])
 
-# 💡 畫布再擴大為 1200x1050，確保 38 檔名單絕對裝得下
 fig1.update_layout(
     width=1200, 
     height=1050, 
@@ -349,7 +333,6 @@ fig2 = go.Figure(data=[go.Table(
     cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=18), align='center', height=35)
 )])
 
-# 動態高度：確保 38 檔股票能一表看完
 dynamic_height = 150 + len(stock_pool) * 40
 fig2.update_layout(title="【Page 2】五日資金動能演變軌跡表", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
 
