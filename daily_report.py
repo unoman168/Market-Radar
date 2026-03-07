@@ -77,7 +77,7 @@ def check_upcoming_earnings(ticker_list):
             pass
     return upcoming
 
-# 4. 抓取數據 (28檔 13F 法人名單)
+# 4. 抓取數據 (28檔名單)
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
     {"ticker": "AAPL", "name": "蘋果", "market": "US", "keywords": ["AAPL"]},
@@ -128,14 +128,24 @@ for info in stock_pool:
         fast_info = stock.fast_info
         current_price = fast_info.last_price
         trading_value_m = round((fast_info.last_volume * current_price * rate) / 1000000, 2)
+        
+        # 💡 解法：加入 Yahoo Finance 新聞備援，突破 GitHub IP 封鎖！
+        yf_news = stock.news
+        yf_titles = [n['title'] for n in yf_news[:5]] if yf_news else []
+        yf_count = len(yf_news) if yf_news else 0
     except:
         current_price, trading_value_m = 0, 0
+        yf_titles, yf_count = [], 0
 
     news_info = get_news_data(kw)
-    total_hype = max((get_dcard_volume(kw) if market == "TW" else 0) + news_info["count"], 1)
+    combined_titles = yf_titles + news_info["titles"]
+    combined_count = yf_count + news_info["count"]
     
-    if total_hype > hottest_stock["hype"] and len(news_info["titles"]) > 0:
-        hottest_stock = {"name": name, "hype": total_hype, "titles": news_info["titles"]}
+    total_hype = max((get_dcard_volume(kw) if market == "TW" else 0) + combined_count, 1)
+    
+    # 紀錄最熱門標的給 AI
+    if total_hype > hottest_stock["hype"] and len(combined_titles) > 0:
+        hottest_stock = {"name": name, "hype": total_hype, "titles": combined_titles[:5]}
 
     new_rows_for_db.append([today_str, ticker, name, market, current_price, trading_value_m, total_hype])
 
@@ -171,15 +181,15 @@ earnings_alerts = check_upcoming_earnings(us_tickers_for_earnings)
 earnings_msg = f"📅 7日內財報預警：{', '.join(earnings_alerts)}" if earnings_alerts else "📅 7日內無重點巨頭財報。"
 
 ai_insight_msg = "🤖 AI 分析：今日市場資訊量不足，無特別情緒波動。"
-if GEMINI_API_KEY and hottest_stock["hype"] > 0:
+if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"]) > 0:
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         titles_text = "\n".join(hottest_stock["titles"])
-        prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞標題，給出一段50字以內的極簡『市場情緒快評』，並明確標示整體情緒為(偏多/偏空/中立/震盪)：\n{titles_text}"
+        prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞標題，給出一段50字以內的極簡『市場情緒快評』，並標示整體情緒為(偏多/偏空/中立/震盪)：\n{titles_text}"
         response = model.generate_content(prompt)
         ai_insight_msg = f"🤖 AI 晨間快評【焦點：{hottest_stock['name']}】\n{response.text.strip()}"
     except Exception as e:
-        print(f"AI 呼叫失敗: {e}")
+        pass
 
 # ==========================================
 # 5. 繪製 Page 1: 動能雷達圖
@@ -208,11 +218,22 @@ fig1 = px.scatter(
 )
 fig1.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
 fig1.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
-fig1.update_traces(textposition='top center')
-fig1.update_layout(margin=dict(b=300))
+fig1.update_traces(textposition='top center', cliponaxis=False)
 
+# 💡 解法：精準計算座標軸邊界，加入 20% 視覺緩衝區，泡泡絕不被切斷
+x_min, x_max = df_plot["資金動能變化 (%)"].min(), df_plot["資金動能變化 (%)"].max()
+y_min, y_max = df_plot["聲量動能變化 (%)"].min(), df_plot["聲量動能變化 (%)"].max()
+if x_min == x_max: x_min, x_max = -10, 10
+if y_min == y_max: y_min, y_max = -10, 10
+x_pad = abs(x_max - x_min) * 0.2 + 5
+y_pad = abs(y_max - y_min) * 0.2 + 5
+fig1.update_xaxes(range=[x_min - x_pad, x_max + x_pad])
+fig1.update_yaxes(range=[y_min - y_pad, y_max + y_pad])
+
+# 💡 解法：把底部留白加大到 350，並且把文字往更下方推 (y=-0.32)，避免重疊
+fig1.update_layout(margin=dict(b=350))
 footer_text = "<b>【象限定義】</b> 🔥 右上：價量齊揚 ｜ 🤫 右下：低調吸金 ｜ ⚠️ 左上：聲量背離 ｜ ❄️ 左下：冷門打底" + list_text
-fig1.add_annotation(text=footer_text, xref="paper", yref="paper", x=0, y=-0.22, showarrow=False, font=dict(size=12, color="#A0A0A0"), xanchor="left", yanchor="top", align="left")
+fig1.add_annotation(text=footer_text, xref="paper", yref="paper", x=0, y=-0.32, showarrow=False, font=dict(size=12, color="#A0A0A0"), xanchor="left", yanchor="top", align="left")
 
 img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
@@ -231,14 +252,13 @@ table_data = []
 for info in stock_pool:
     tk = info["ticker"]
     name = info["name"]
-    df_sub = df_all[df_all['代號'] == tk].tail(6) # 抓取最近 6 筆來算 5 天動能
+    df_sub = df_all[df_all['代號'] == tk].tail(6)
     
-    quadrants = ["⚪", "⚪", "⚪", "⚪", "⚪"] # 預設無資料
+    quadrants = ["⚪", "⚪", "⚪", "⚪", "⚪"]
     
     if len(df_sub) >= 2:
         vals = df_sub['成交金額_百萬美元'].values
         hypes = df_sub['總聲量'].values
-        
         for i in range(1, len(df_sub)):
             money_mom = ((vals[i] - vals[i-1]) / vals[i-1] * 100) if vals[i-1] > 0 else 0
             hype_mom = ((hypes[i] - hypes[i-1]) / hypes[i-1] * 100) if hypes[i-1] > 0 else 0
@@ -249,7 +269,6 @@ for info in stock_pool:
             elif money_mom <= 0 and hype_mom > 0: q = "⚠️"
             else: q = "❄️"
             
-            # 從最右邊(Today)開始填入軌跡
             target_idx = 5 - (len(df_sub) - i)
             if 0 <= target_idx < 5:
                 quadrants[target_idx] = q
@@ -262,7 +281,10 @@ fig2 = go.Figure(data=[go.Table(
     header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
     cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=18), align='center', height=35)
 )])
-fig2.update_layout(title="【Page 2】五日資金動能演變軌跡表", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20))
+
+# 💡 解法：動態計算表格總高度 (基礎150 + 每檔股票約需要40px的空間)
+dynamic_height = 150 + len(stock_pool) * 40
+fig2.update_layout(title="【Page 2】五日資金動能演變軌跡表", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
 
 img_path_2 = "trend_page2.jpg"
 fig2.write_image(img_path_2, scale=2)
@@ -277,7 +299,6 @@ def upload_image(file_path):
     except:
         pass
     
-    # 備用圖床
     try:
         import base64
         with open(file_path, "rb") as f:
