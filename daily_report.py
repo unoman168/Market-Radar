@@ -15,7 +15,7 @@ import gspread
 from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：原生矩陣上色絕對防爆版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：資料庫清洗與精準K線版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -160,15 +160,22 @@ for info in stock_pool:
     
     try:
         stock = yf.Ticker(ticker)
-        fast_info = stock.fast_info
-        current_price = fast_info.last_price
-        trading_value_m = round((fast_info.last_volume * current_price * rate) / 1000000, 2)
-        
+        # 🌟 升級引擎：抓取近5日歷史K線，確保數字為真實精準的收盤價
+        hist = stock.history(period="5d")
+        if not hist.empty:
+            current_price = float(hist['Close'].iloc[-1])
+            current_vol = float(hist['Volume'].iloc[-1])
+            trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
+        else:
+            fast_info = stock.fast_info
+            current_price = float(fast_info.last_price)
+            trading_value_m = round((fast_info.last_volume * current_price * rate) / 1000000, 2)
+            
         yf_news = stock.news
         yf_titles = [n['title'] for n in yf_news[:5]] if yf_news else []
         yf_count = len(yf_news) if yf_news else 0
-    except:
-        current_price, trading_value_m = 0, 0
+    except Exception as e:
+        current_price, trading_value_m = 0.0, 0.0
         yf_titles, yf_count = [], 0
 
     news_info = get_news_data(kw)
@@ -194,13 +201,19 @@ for info in stock_pool:
 
     if not df_history.empty:
         # 確保日期格式一致，避免重複計算
-        df_history['日期'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
-        past_records = df_history[(df_history['代號'] == ticker) & (df_history['日期'] != today_str)]
+        df_history['日期_格式化'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
+        past_records = df_history[(df_history['代號'] == ticker) & (df_history['日期_格式化'] != today_str)]
         
         if not past_records.empty:
             last_record = past_records.iloc[-1]
-            past_val = last_record['成交金額_百萬美元']
-            past_hype = max(last_record['總聲量'], 1)
+            # 強制清洗歷史資料，把字串與逗號轉為純數字
+            try:
+                past_val = float(str(last_record['成交金額_百萬美元']).replace(',', ''))
+                past_hype = float(str(last_record['總聲量']).replace(',', ''))
+            except:
+                past_val, past_hype = 0.0, 1.0
+                
+            past_hype = max(past_hype, 1)
             
             if past_val > 0: money_mom = ((trading_value_m - past_val) / past_val) * 100
             hype_mom = ((total_hype - past_hype) / past_hype) * 100
@@ -287,27 +300,31 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 原生矩陣上色絕對防爆版！
+# 6. 繪製 Page 2: 原生矩陣上色與強力資料清洗版
 # ==========================================
-print("正在計算五日歷史軌跡與滾動漲跌幅 (原生色彩矩陣渲染中)...")
+print("正在計算五日歷史軌跡與滾動漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
 df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
 
-# 確保乾淨的歷史資料 (剔除同一天重複執行的資料)
+# 🌟 強力資料庫清洗：把所有歷史紀錄強制轉型，消滅 NaN 與空白
 df_all['日期_格式化'] = pd.to_datetime(df_all['日期']).dt.strftime('%Y-%m-%d')
+df_all['收盤價'] = pd.to_numeric(df_all['收盤價'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+df_all['成交金額_百萬美元'] = pd.to_numeric(df_all['成交金額_百萬美元'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+df_all['總聲量'] = pd.to_numeric(df_all['總聲量'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+
+# 剔除重複執行的資料，保持一日一筆的乾淨歷史
 df_all = df_all.drop_duplicates(subset=['代號', '日期_格式化'], keep='last')
 df_all = df_all.sort_values(by=['代號', '日期_格式化'])
 
-table_data = []      # 存放純文字
-table_colors = []    # 存放原生顏色代碼
+table_data = []      
+table_colors = []    
 
 for info in stock_pool:
     tk = info["ticker"]
     name = info["name"]
     df_sub = df_all[df_all['代號'] == tk].tail(6)
     
-    # 初始化：純文字與全白字體
     row_texts = [name, "⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
     row_colors = ["#ffffff"] * 6 
     
@@ -327,30 +344,30 @@ for info in stock_pool:
             else: q = "❄️"
             
             p_str = "-"
-            cell_color = "#ffffff"  # 預設白色
+            cell_color = "#ffffff"  
             
-            # 💡 零元防爆機制：確保今天與昨天的股價都有效大於0，才計算漲跌幅
+            # 必須大於 0 才能計算，且都是被清洗過純淨的 float
             if prices[i] > 0 and prices[i-1] > 0:
                 pct_change = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
                 if pct_change > 0:
                     p_str = f"+{pct_change:.1f}%"
-                    cell_color = "#ff4d4d"  # 漲：紅色
+                    cell_color = "#ff4d4d"
                 elif pct_change < 0:
                     p_str = f"{pct_change:.1f}%"
-                    cell_color = "#00cc96"  # 跌：綠色
+                    cell_color = "#00cc96"
                 else:
                     p_str = "0.0%"
-                    cell_color = "#888888"  # 平：灰色
+                    cell_color = "#888888"
             
             target_idx = 6 - (len(df_sub) - i)
             if 1 <= target_idx <= 5:
-                row_texts[target_idx] = f"{q} {p_str}"  # 填入純文字，沒有任何 HTML
-                row_colors[target_idx] = cell_color     # 獨立紀錄該格子的專屬顏色
+                row_texts[target_idx] = f"{q} {p_str}"  
+                row_colors[target_idx] = cell_color     
                 
     table_data.append(row_texts)
     table_colors.append(row_colors)
 
-# 💡 將列資料轉換為欄資料，供 Plotly 渲染
+# 轉置為行格式供 Plotly 渲染
 col_data = list(zip(*table_data))
 col_colors = list(zip(*table_colors))
 
@@ -358,7 +375,6 @@ headers = ['<b>標的名稱</b>', '<b>T-4</b>', '<b>T-3</b>', '<b>T-2</b>', '<b>
 fig2 = go.Figure(data=[go.Table(
     columnwidth=[100, 100, 100, 100, 100, 100],
     header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
-    # 💡 魔法發生在這裡：Plotly 直接套用我們算好的原生顏色矩陣，完全不用解析 HTML！
     cells=dict(values=col_data, fill_color='#1e1e1e', font=dict(color=col_colors, size=14), align='center', height=35)
 )])
 
