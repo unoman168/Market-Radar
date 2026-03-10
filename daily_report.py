@@ -15,7 +15,7 @@ import gspread
 from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：5日漲跌幅完美疊加版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：動能與漲跌幅並排防爆版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -99,7 +99,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據 (38檔 跨洲際法人名單)
+# 4. 抓取數據 (38檔名單)
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -231,7 +231,7 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
         )
         ai_insight_msg = f"🤖 AI 晨間快評【焦點：{hottest_stock['name']}】\n{response.text.strip()}"
     except Exception as e:
-        print(f"AI 呼叫失敗: {e}")
+        pass
 
 # ==========================================
 # 5. 繪製 Page 1: 動能雷達圖
@@ -289,7 +289,7 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 五日動能軌跡與漲跌幅矩陣 
+# 6. 繪製 Page 2: 五日動能軌跡與漲跌幅 (左右並排防爆版)
 # ==========================================
 print("正在計算五日歷史軌跡與滾動漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
@@ -304,17 +304,15 @@ for info in stock_pool:
     name = info["name"]
     df_sub = df_all[df_all['代號'] == tk].tail(6)
     
-    # 預設每一天的格子內容：Emoji + 漲跌幅
-    quadrants = ["⚪<br>-", "⚪<br>-", "⚪<br>-", "⚪<br>-", "⚪<br>-"]
+    # 預設每一天的格子內容為並排格式
+    quadrants = ["⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
     
     if len(df_sub) >= 2:
         vals = df_sub['成交金額_百萬美元'].values
         hypes = df_sub['總聲量'].values
         prices = df_sub['收盤價'].values
         
-        # 迴圈計算「每一天」的動能與漲跌幅
         for i in range(1, len(df_sub)):
-            # 1. 計算該日動能象限
             money_mom = ((vals[i] - vals[i-1]) / vals[i-1] * 100) if vals[i-1] > 0 else 0
             hype_mom = ((hypes[i] - hypes[i-1]) / hypes[i-1] * 100) if hypes[i-1] > 0 else 0
             
@@ -324,35 +322,35 @@ for info in stock_pool:
             elif money_mom <= 0 and hype_mom > 0: q = "⚠️"
             else: q = "❄️"
             
-            # 2. 💡 修正亂碼：計算該日漲跌幅，並使用安全的 <font> 標籤上色
             p_str = "-"
             if prices[i-1] > 0:
                 pct_change = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
+                # 💡 使用標準且安全的單引號包覆外層，雙引號包覆內層 HTML，確保不被切斷
                 if pct_change > 0:
-                    p_str = f'<font color="#ff4d4d">+{pct_change:.1f}%</font>'
+                    p_str = f'<span style="color:#ff4d4d">+{pct_change:.1f}%</span>'
                 elif pct_change < 0:
-                    p_str = f'<font color="#00cc96">{pct_change:.1f}%</font>'
+                    p_str = f'<span style="color:#00cc96">{pct_change:.1f}%</span>'
                 else:
-                    p_str = f'<font color="#888888">0.0%</font>'
+                    p_str = f'<span style="color:#888888">0.0%</span>'
             
-            # 3. 將 Emoji 與漲跌幅上下合併寫入對應的天數位置
+            # 💡 左右並排：圖案 空格 漲跌幅
             target_idx = 5 - (len(df_sub) - i)
             if 0 <= target_idx < 5:
-                quadrants[target_idx] = f"{q}<br>{p_str}"
+                quadrants[target_idx] = f"{q} {p_str}"
                 
     table_data.append([name] + quadrants)
 
-# 回復為 6 欄，因為漲跌幅已經完美融合在每天的動能下方了
 headers = ['<b>標的名稱</b>', '<b>T-4</b>', '<b>T-3</b>', '<b>T-2</b>', '<b>T-1</b>', '<b>Today</b>']
 fig2 = go.Figure(data=[go.Table(
-    columnwidth=[100, 80, 80, 80, 80, 80],
+    # 💡 核心防爆設計：把後面五個天數的欄位大幅加寬 (110)，確保 HTML 標籤不會被擠斷
+    columnwidth=[110, 110, 110, 110, 110, 110],
     header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
-    # 💡 將格子高度加高到 50，以容納兩行文字
-    cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=15), align='center', height=50)
+    # 💡 恢復精巧的單行高度 (35)，並微調字體大小 (14)
+    cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=14), align='center', height=35)
 )])
 
-dynamic_height = 150 + len(stock_pool) * 50
-fig2.update_layout(title="【Page 2】五日資金動能與滾動漲跌幅矩陣", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
+dynamic_height = 150 + len(stock_pool) * 35
+fig2.update_layout(title="【Page 2】五日資金動能與並排漲跌幅軌跡表", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
 
 img_path_2 = "trend_page2.jpg"
 fig2.write_image(img_path_2, scale=2)
