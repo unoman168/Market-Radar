@@ -15,7 +15,7 @@ import gspread
 from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：資料庫清洗與防爆版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：原生矩陣上色絕對防爆版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -193,8 +193,10 @@ for info in stock_pool:
     insight, emoji = "🆕 首次建檔", "⚪"
 
     if not df_history.empty:
-        # 💡 防爆機制 1：取出歷史資料前，先確保不會抓到重複的今天資料
+        # 確保日期格式一致，避免重複計算
+        df_history['日期'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
         past_records = df_history[(df_history['代號'] == ticker) & (df_history['日期'] != today_str)]
+        
         if not past_records.empty:
             last_record = past_records.iloc[-1]
             past_val = last_record['成交金額_百萬美元']
@@ -272,17 +274,12 @@ y_pad = abs(y_max - y_min) * 0.2 + 5
 fig1.update_xaxes(range=[x_min - x_pad, x_max + x_pad])
 fig1.update_yaxes(range=[y_min - y_pad, y_max + y_pad])
 
-fig1.update_layout(
-    width=1200, 
-    height=1050, 
-    margin=dict(t=120, b=400, l=80, r=150)
-)
+fig1.update_layout(width=1200, height=1050, margin=dict(t=120, b=400, l=80, r=150))
 
 footer_text = "<b>【象限定義】</b> 🔥 右上：價量齊揚 ｜ 🤫 右下：低調吸金 ｜ ⚠️ 左上：聲量背離 ｜ ❄️ 左下：冷門打底" + list_text
 fig1.add_annotation(
     text=footer_text, xref="paper", yref="paper", 
-    x=0, y=-0.35, 
-    showarrow=False, font=dict(size=14, color="#A0A0A0"), 
+    x=0, y=-0.35, showarrow=False, font=dict(size=14, color="#A0A0A0"), 
     xanchor="left", yanchor="top", align="left"
 )
 
@@ -290,26 +287,29 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 五日動能軌跡與漲跌幅 (並排防爆版)
+# 6. 繪製 Page 2: 原生矩陣上色絕對防爆版！
 # ==========================================
-print("正在計算五日歷史軌跡與滾動漲跌幅...")
+print("正在計算五日歷史軌跡與滾動漲跌幅 (原生色彩矩陣渲染中)...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
 df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
 
-# 💡 防爆機制 2：剔除重複執行產生的歷史殘影
-df_all['日期'] = pd.to_datetime(df_all['日期'])
-df_all = df_all.drop_duplicates(subset=['代號', '日期'], keep='last')
-df_all = df_all.sort_values(by=['代號', '日期'])
+# 確保乾淨的歷史資料 (剔除同一天重複執行的資料)
+df_all['日期_格式化'] = pd.to_datetime(df_all['日期']).dt.strftime('%Y-%m-%d')
+df_all = df_all.drop_duplicates(subset=['代號', '日期_格式化'], keep='last')
+df_all = df_all.sort_values(by=['代號', '日期_格式化'])
 
-table_data = []
+table_data = []      # 存放純文字
+table_colors = []    # 存放原生顏色代碼
+
 for info in stock_pool:
     tk = info["ticker"]
     name = info["name"]
     df_sub = df_all[df_all['代號'] == tk].tail(6)
     
-    # 預設：當沒有足夠的資料算出幅度時，給予乾淨的符號
-    quadrants = ["⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
+    # 初始化：純文字與全白字體
+    row_texts = [name, "⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
+    row_colors = ["#ffffff"] * 6 
     
     if len(df_sub) >= 2:
         vals = df_sub['成交金額_百萬美元'].values
@@ -327,29 +327,39 @@ for info in stock_pool:
             else: q = "❄️"
             
             p_str = "-"
-            if prices[i-1] > 0:
-                pct_change = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
-                
-                # 💡 防爆機制 3：使用最原始的 font 標籤，不混用引號，確保 Plotly 百分之百解析成功
-                if pct_change > 0:
-                    p_str = f'<font color="#ff4d4d">+{pct_change:.1f}%</font>'
-                elif pct_change < 0:
-                    p_str = f'<font color="#00cc96">{pct_change:.1f}%</font>'
-                else:
-                    p_str = f'<font color="#888888">0.0%</font>'
+            cell_color = "#ffffff"  # 預設白色
             
-            # 將圖案與漲跌幅緊密結合 (左右並排)
-            target_idx = 5 - (len(df_sub) - i)
-            if 0 <= target_idx < 5:
-                quadrants[target_idx] = f"{q} {p_str}"
+            # 💡 零元防爆機制：確保今天與昨天的股價都有效大於0，才計算漲跌幅
+            if prices[i] > 0 and prices[i-1] > 0:
+                pct_change = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
+                if pct_change > 0:
+                    p_str = f"+{pct_change:.1f}%"
+                    cell_color = "#ff4d4d"  # 漲：紅色
+                elif pct_change < 0:
+                    p_str = f"{pct_change:.1f}%"
+                    cell_color = "#00cc96"  # 跌：綠色
+                else:
+                    p_str = "0.0%"
+                    cell_color = "#888888"  # 平：灰色
+            
+            target_idx = 6 - (len(df_sub) - i)
+            if 1 <= target_idx <= 5:
+                row_texts[target_idx] = f"{q} {p_str}"  # 填入純文字，沒有任何 HTML
+                row_colors[target_idx] = cell_color     # 獨立紀錄該格子的專屬顏色
                 
-    table_data.append([name] + quadrants)
+    table_data.append(row_texts)
+    table_colors.append(row_colors)
+
+# 💡 將列資料轉換為欄資料，供 Plotly 渲染
+col_data = list(zip(*table_data))
+col_colors = list(zip(*table_colors))
 
 headers = ['<b>標的名稱</b>', '<b>T-4</b>', '<b>T-3</b>', '<b>T-2</b>', '<b>T-1</b>', '<b>Today</b>']
 fig2 = go.Figure(data=[go.Table(
     columnwidth=[100, 100, 100, 100, 100, 100],
     header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
-    cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=14), align='center', height=35)
+    # 💡 魔法發生在這裡：Plotly 直接套用我們算好的原生顏色矩陣，完全不用解析 HTML！
+    cells=dict(values=col_data, fill_color='#1e1e1e', font=dict(color=col_colors, size=14), align='center', height=35)
 )])
 
 dynamic_height = 150 + len(stock_pool) * 35
