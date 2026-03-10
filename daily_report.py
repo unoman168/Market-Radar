@@ -12,10 +12,10 @@ import plotly.graph_objects as go
 import feedparser
 from google.oauth2.service_account import Credentials
 import gspread
-from google import genai  # 🌟 換成 Google 最新官方套件
+from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：新版 AI 賦能 + Reddit 雙引擎版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：加入漲跌幅對照版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -221,7 +221,6 @@ earnings_msg = f"📅 7日內財報預警：{', '.join(earnings_alerts)}" if ear
 ai_insight_msg = "🤖 AI 分析：今日市場資訊量不足，無特別情緒波動。"
 if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"]) > 0:
     try:
-        # 🌟 換上最新的 google-genai 呼叫語法與 Gemini 2.5 Flash 模型
         client = genai.Client(api_key=GEMINI_API_KEY)
         titles_text = "\n".join(hottest_stock["titles"])
         prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞標題，給出一段50字以內的極簡『市場情緒快評』，並標示整體情緒為(偏多/偏空/中立/震盪)：\n{titles_text}"
@@ -290,9 +289,9 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 五日動能軌跡表 
+# 6. 繪製 Page 2: 五日動能軌跡表 (💡 加入漲跌幅計算)
 # ==========================================
-print("正在計算五日歷史軌跡...")
+print("正在計算五日歷史軌跡與今日漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
 df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
@@ -306,10 +305,23 @@ for info in stock_pool:
     df_sub = df_all[df_all['代號'] == tk].tail(6)
     
     quadrants = ["⚪", "⚪", "⚪", "⚪", "⚪"]
+    price_change_str = "-" # 預設值
     
     if len(df_sub) >= 2:
         vals = df_sub['成交金額_百萬美元'].values
         hypes = df_sub['總聲量'].values
+        prices = df_sub['收盤價'].values
+        
+        # 💡 計算最新單日漲跌幅，並上色 (紅漲綠跌)
+        if prices[-2] > 0:
+            pct_change = ((prices[-1] - prices[-2]) / prices[-2]) * 100
+            if pct_change > 0:
+                price_change_str = f"<span style='color:#ff4d4d'>+{pct_change:.2f}%</span>"
+            elif pct_change < 0:
+                price_change_str = f"<span style='color:#00cc96'>{pct_change:.2f}%</span>"
+            else:
+                price_change_str = "0.00%"
+
         for i in range(1, len(df_sub)):
             money_mom = ((vals[i] - vals[i-1]) / vals[i-1] * 100) if vals[i-1] > 0 else 0
             hype_mom = ((hypes[i] - hypes[i-1]) / hypes[i-1] * 100) if hypes[i-1] > 0 else 0
@@ -324,13 +336,14 @@ for info in stock_pool:
             if 0 <= target_idx < 5:
                 quadrants[target_idx] = q
                 
-    table_data.append([name] + quadrants)
+    table_data.append([name, price_change_str] + quadrants)
 
-headers = ['<b>標的名稱</b>', '<b>T-4 (天前)</b>', '<b>T-3 (天前)</b>', '<b>T-2 (前天)</b>', '<b>T-1 (昨天)</b>', '<b>Today (今日)</b>']
+# 💡 表頭與寬度設定更新，加入「今日漲跌」
+headers = ['<b>標的名稱</b>', '<b>今日漲跌</b>', '<b>T-4 (天前)</b>', '<b>T-3 (天前)</b>', '<b>T-2 (前天)</b>', '<b>T-1 (昨天)</b>', '<b>Today (今日)</b>']
 fig2 = go.Figure(data=[go.Table(
-    columnwidth=[120, 80, 80, 80, 80, 80],
+    columnwidth=[120, 100, 80, 80, 80, 80, 80],
     header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
-    cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=18), align='center', height=35)
+    cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=16), align='center', height=35)
 )])
 
 dynamic_height = 150 + len(stock_pool) * 40
