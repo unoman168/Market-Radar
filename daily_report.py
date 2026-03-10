@@ -15,7 +15,7 @@ import gspread
 from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：動能與漲跌幅並排防爆版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：資料庫清洗與防爆版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -193,6 +193,7 @@ for info in stock_pool:
     insight, emoji = "🆕 首次建檔", "⚪"
 
     if not df_history.empty:
+        # 💡 防爆機制 1：取出歷史資料前，先確保不會抓到重複的今天資料
         past_records = df_history[(df_history['代號'] == ticker) & (df_history['日期'] != today_str)]
         if not past_records.empty:
             last_record = past_records.iloc[-1]
@@ -289,13 +290,16 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 五日動能軌跡與漲跌幅 (左右並排防爆版)
+# 6. 繪製 Page 2: 五日動能軌跡與漲跌幅 (並排防爆版)
 # ==========================================
 print("正在計算五日歷史軌跡與滾動漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
 df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
+
+# 💡 防爆機制 2：剔除重複執行產生的歷史殘影
 df_all['日期'] = pd.to_datetime(df_all['日期'])
+df_all = df_all.drop_duplicates(subset=['代號', '日期'], keep='last')
 df_all = df_all.sort_values(by=['代號', '日期'])
 
 table_data = []
@@ -304,7 +308,7 @@ for info in stock_pool:
     name = info["name"]
     df_sub = df_all[df_all['代號'] == tk].tail(6)
     
-    # 預設每一天的格子內容為並排格式
+    # 預設：當沒有足夠的資料算出幅度時，給予乾淨的符號
     quadrants = ["⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
     
     if len(df_sub) >= 2:
@@ -325,15 +329,16 @@ for info in stock_pool:
             p_str = "-"
             if prices[i-1] > 0:
                 pct_change = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
-                # 💡 使用標準且安全的單引號包覆外層，雙引號包覆內層 HTML，確保不被切斷
+                
+                # 💡 防爆機制 3：使用最原始的 font 標籤，不混用引號，確保 Plotly 百分之百解析成功
                 if pct_change > 0:
-                    p_str = f'<span style="color:#ff4d4d">+{pct_change:.1f}%</span>'
+                    p_str = f'<font color="#ff4d4d">+{pct_change:.1f}%</font>'
                 elif pct_change < 0:
-                    p_str = f'<span style="color:#00cc96">{pct_change:.1f}%</span>'
+                    p_str = f'<font color="#00cc96">{pct_change:.1f}%</font>'
                 else:
-                    p_str = f'<span style="color:#888888">0.0%</span>'
+                    p_str = f'<font color="#888888">0.0%</font>'
             
-            # 💡 左右並排：圖案 空格 漲跌幅
+            # 將圖案與漲跌幅緊密結合 (左右並排)
             target_idx = 5 - (len(df_sub) - i)
             if 0 <= target_idx < 5:
                 quadrants[target_idx] = f"{q} {p_str}"
@@ -342,10 +347,8 @@ for info in stock_pool:
 
 headers = ['<b>標的名稱</b>', '<b>T-4</b>', '<b>T-3</b>', '<b>T-2</b>', '<b>T-1</b>', '<b>Today</b>']
 fig2 = go.Figure(data=[go.Table(
-    # 💡 核心防爆設計：把後面五個天數的欄位大幅加寬 (110)，確保 HTML 標籤不會被擠斷
-    columnwidth=[110, 110, 110, 110, 110, 110],
+    columnwidth=[100, 100, 100, 100, 100, 100],
     header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
-    # 💡 恢復精巧的單行高度 (35)，並微調字體大小 (14)
     cells=dict(values=list(zip(*table_data)), fill_color='#1e1e1e', font=dict(color='white', size=14), align='center', height=35)
 )])
 
