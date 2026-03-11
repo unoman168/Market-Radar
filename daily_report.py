@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pytz
 import requests
 import pandas as pd
+import numpy as np  # 🌟 新增數據運算套件，用來修補資料
 import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
@@ -15,7 +16,7 @@ import gspread
 from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：資料庫清洗與精準K線版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：歷史資料自動修復版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -160,7 +161,6 @@ for info in stock_pool:
     
     try:
         stock = yf.Ticker(ticker)
-        # 🌟 升級引擎：抓取近5日歷史K線，確保數字為真實精準的收盤價
         hist = stock.history(period="5d")
         if not hist.empty:
             current_price = float(hist['Close'].iloc[-1])
@@ -200,13 +200,11 @@ for info in stock_pool:
     insight, emoji = "🆕 首次建檔", "⚪"
 
     if not df_history.empty:
-        # 確保日期格式一致，避免重複計算
         df_history['日期_格式化'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
         past_records = df_history[(df_history['代號'] == ticker) & (df_history['日期_格式化'] != today_str)]
         
         if not past_records.empty:
             last_record = past_records.iloc[-1]
-            # 強制清洗歷史資料，把字串與逗號轉為純數字
             try:
                 past_val = float(str(last_record['成交金額_百萬美元']).replace(',', ''))
                 past_hype = float(str(last_record['總聲量']).replace(',', ''))
@@ -300,20 +298,23 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 原生矩陣上色與強力資料清洗版
+# 6. 繪製 Page 2: 歷史記憶修復版
 # ==========================================
 print("正在計算五日歷史軌跡與滾動漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
 df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
 
-# 🌟 強力資料庫清洗：把所有歷史紀錄強制轉型，消滅 NaN 與空白
 df_all['日期_格式化'] = pd.to_datetime(df_all['日期']).dt.strftime('%Y-%m-%d')
-df_all['收盤價'] = pd.to_numeric(df_all['收盤價'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+df_all['收盤價'] = pd.to_numeric(df_all['收盤價'].astype(str).str.replace(',', ''), errors='coerce')
 df_all['成交金額_百萬美元'] = pd.to_numeric(df_all['成交金額_百萬美元'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 df_all['總聲量'] = pd.to_numeric(df_all['總聲量'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 
-# 剔除重複執行的資料，保持一日一筆的乾淨歷史
+# 🌟 歷史記憶修復術：自動填補過去因 Bug 導致的 0 元收盤價，將 0 替換為空值，並用前後日的真實價格自動補齊
+df_all['收盤價'] = df_all['收盤價'].replace(0.0, np.nan)
+df_all['收盤價'] = df_all.groupby('代號')['收盤價'].transform(lambda x: x.ffill().bfill())
+df_all['收盤價'] = df_all['收盤價'].fillna(0) # 最終保險
+
 df_all = df_all.drop_duplicates(subset=['代號', '日期_格式化'], keep='last')
 df_all = df_all.sort_values(by=['代號', '日期_格式化'])
 
@@ -346,7 +347,6 @@ for info in stock_pool:
             p_str = "-"
             cell_color = "#ffffff"  
             
-            # 必須大於 0 才能計算，且都是被清洗過純淨的 float
             if prices[i] > 0 and prices[i-1] > 0:
                 pct_change = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
                 if pct_change > 0:
@@ -367,7 +367,6 @@ for info in stock_pool:
     table_data.append(row_texts)
     table_colors.append(row_colors)
 
-# 轉置為行格式供 Plotly 渲染
 col_data = list(zip(*table_data))
 col_colors = list(zip(*table_colors))
 
