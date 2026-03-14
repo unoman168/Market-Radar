@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import urllib.parse
+import urllib.request  # 確保下載模組正確載入
 from datetime import datetime, timedelta
 import pytz
 import requests
@@ -24,15 +25,20 @@ import matplotlib.font_manager as fm
 print("啟動【跨國巨頭 38 檔：地心引力 & 黃金流體結界 (純淨穩定版)】法人戰情機器人...")
 
 # ==========================================
-# 1. 系統級安裝中文字型 (絕對防禦亂碼)
+# 1. 系統級安裝中文字型 (修復 404 網址，絕對防禦亂碼)
 # ==========================================
 font_path_local = "NotoSansTC-Regular.ttf"
 if not os.path.exists(font_path_local):
     print("正在下載 Noto Sans TC 中文字型...")
-    url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansTC/NotoSansTC-Regular.ttf"
-    urllib.request.urlretrieve(url, font_path_local)
+    # 🌟 更新為 Google Fonts 最新的穩定存放庫網址
+    url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
+    try:
+        urllib.request.urlretrieve(url, font_path_local)
+        print("✅ 字型下載完成！")
+    except Exception as e:
+        print(f"❌ 字型下載失敗: {e}")
 
-if platform.system() == "Linux":
+if platform.system() == "Linux" and os.path.exists(font_path_local):
     font_dir = os.path.expanduser("~/.fonts")
     os.makedirs(font_dir, exist_ok=True)
     sys_font_path = os.path.join(font_dir, "NotoSansTC-Regular.ttf")
@@ -42,7 +48,7 @@ if platform.system() == "Linux":
         subprocess.run(["fc-cache", "-f", "-v"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # 載入字型給 Matplotlib 使用
-font_prop = fm.FontProperties(fname=font_path_local)
+font_prop = fm.FontProperties(fname=font_path_local) if os.path.exists(font_path_local) else fm.FontProperties()
 
 # ==========================================
 # 2. 讀取金鑰與初始化
