@@ -283,7 +283,7 @@ for i, row in df_plot.iterrows():
     pct = row['今日漲跌幅']
     line_colors.append('#ff4d4d' if pct > 0 else ('#00cc96' if pct < 0 else '#888888'))
     
-    # 🌟 加入漲跌幅顯示
+    # 🌟 絕對純淨文字 (沒有 HTML)，加入漲跌幅顯示
     pct_str = f"+{pct:.1f}%" if pct > 0 else f"{pct:.1f}%"
     text_labels.append(f"{row['名稱']}<br>{row['代號']}<br>{pct_str}")
     
@@ -328,31 +328,18 @@ fig1.update_layout(
     template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 
-# 🌟 優化註解排版：完整還原圖例說明
-annotation_html = """
-<div style='text-align: left; line-height: 1.8;'>
-    <span style='color: white;'>中心顏色 - 情緒（深灰色統一，邊框框線熱度顯示）：</span><br>
-    <span style='color: #ff4d4d;'>🔴 偏多</span>　<span style='color: #00cc96;'>🟢 震盪</span>　<span style='color: #888888;'>⚪ 中立</span>　<span style='color: #AB63FA;'>🟣 偏空</span>
-</div>
-"""
-
-annotation_html2 = """
-<div style='text-align: left; line-height: 1.8;'>
-    <span style='color: #FFD700;'>不規則金色流體框線：</span><span style='color: white;'>代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)</span><br>
-    <span style='color: white;'>泡泡邊框顏色：代表動能狀態</span>
-</div>
-"""
+# 🌟 極簡純淨註解 (杜絕 HTML 亂碼，上下分行對齊)
+annotation_text = "🔆 不規則金色流體框線：代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)\n\n🔴 紅色外框：收盤上漲　　🟢 綠色外框：收盤下跌　　⚪ 灰色外框：平盤無變化"
 
 fig1.add_annotation(
-    text=annotation_html, xref="paper", yref="paper", x=0.05, y=-0.1, 
-    showarrow=False, font=dict(size=14), xanchor="left", yanchor="top"
+    text=annotation_text, 
+    xref="paper", yref="paper", 
+    x=0.5, y=-0.1, 
+    showarrow=False, 
+    font=dict(size=17, color="#E0E0E0"), 
+    xanchor="center", yanchor="top",
+    align="center"
 )
-
-fig1.add_annotation(
-    text=annotation_html2, xref="paper", yref="paper", x=0.5, y=-0.1, 
-    showarrow=False, font=dict(size=14), xanchor="left", yanchor="top"
-)
-
 
 fig1.write_image("radar_page1.jpg", scale=2)
 
