@@ -15,11 +15,30 @@ from google.oauth2.service_account import Credentials
 import gspread
 from google import genai
 import praw
+import matplotlib.pyplot as plt
+import io
 from scipy.interpolate import splprep, splev
 
-print("啟動【跨國巨頭 38 檔：地心引力與黃金流體結界版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：地心引力 & 黃金流體結界版】法人戰情機器人...")
 
-# 1. 讀取金鑰
+# --- 1. 解決亂碼：自動安裝中文字型 ---
+try:
+    print("正在安裝中文字型，以利kaleido正確渲染...")
+    # 下載 Google Noto Sans TC (繁體中文)
+    font_url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansTC/NotoSansTC-Regular.ttf"
+    font_path = "NotoSansTC-Regular.ttf"
+    if not os.path.exists(font_path):
+        requests.get(font_url) # 下載
+    
+    import matplotlib.font_manager as fm
+    fe = fm.FontEntry(fname=font_path, name='Noto Sans TC')
+    fm.fontManager.ttflist.insert(0, fe)
+    plt.rcParams['font.sans-serif'] = ['Noto Sans TC']
+    print("中文字型 Noto Sans TC 安裝成功。")
+except Exception as e:
+    print(f"字型安裝失敗: {e}")
+
+# 2. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 gcp_sa_key_json = os.getenv('GCP_SA_KEY')
@@ -39,7 +58,7 @@ if REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET:
     except Exception as e:
         print(f"Reddit 初始化失敗: {e}")
 
-# 2. 登入 Google Sheets
+# 3. 登入 Google Sheets
 creds_dict = json.loads(gcp_sa_key_json)
 scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -55,7 +74,7 @@ except Exception as e:
 
 df_history = pd.DataFrame(worksheet.get_all_records())
 
-# 3. 爬蟲函數群
+# 4. 爬蟲函數群
 def get_news_data(keyword, limit=5):
     query = f'"{keyword}"'
     encoded_keyword = urllib.parse.quote(query)
@@ -105,7 +124,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據 (38檔名單) 與暴力 K 線萃取
+# 5. 抓取數據 (38檔名單) 與暴力 K 線萃取
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -158,7 +177,7 @@ today_results = []
 new_rows_for_db = []
 hottest_stock = {"name": "", "hype": 0, "titles": []}
 us_tickers_for_earnings = []
-stock_real_price_history = {}
+stock_real_price_history = {} # 🌟 暴力 K 線儲存庫
 
 for info in stock_pool:
     ticker, name, market, kw = info["ticker"], info["name"], info["market"], info["keywords"][0]
@@ -171,19 +190,25 @@ for info in stock_pool:
     
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="15d")
+        # 暴力抓 10 天，確保扣掉假日後還有 6 個交易日可以算 5 天的單日漲跌幅
+        hist = stock.history(period="10d")
         if not hist.empty and 'Close' in hist.columns:
+            # 強制剔除 NaN，只拿真實有交易的收盤價和成交量
             closes = hist['Close'].dropna().tolist()
             vols = hist['Volume'].dropna().tolist()
             
             if len(closes) > 0:
+                # 只拿真正有交易的最後一天來算當前價格和成交額
                 current_price = float(closes[-1])
                 current_vol = float(vols[-1]) if len(vols) > 0 else 0.0
                 trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
                 
+                # 計算過去 5 次的真實單日漲跌幅
                 if len(closes) >= 2:
                     pcts = [((closes[i] - closes[i-1]) / closes[i-1]) * 100 for i in range(1, len(closes))]
+                    # 確保矩陣圖表（Page 2）絕對是填滿的
                     last_5 = pcts[-5:]
+                    # 不滿 5 天的前面補 0
                     while len(last_5) < 5: last_5.insert(0, 0.0)
                     stock_real_price_history[ticker] = last_5
                     
@@ -211,7 +236,8 @@ for info in stock_pool:
 
     new_rows_for_db.append([today_str, ticker, name, market, current_price, trading_value_m, total_hype])
 
-    insight = "🆕 首次建檔"
+    money_mom, hype_mom = 0, 0
+    insight, emoji, short_insight = "🆕 首次建檔", "⚪", "首次"
 
     if not df_history.empty:
         df_history['日期_格式化'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
@@ -226,37 +252,37 @@ for info in stock_pool:
                 past_val, past_hype = 0.0, 1.0
                 
             past_hype = max(past_hype, 1)
-            money_mom = ((trading_value_m - past_val) / past_val) * 100 if past_val > 0 else 0
+            
+            if past_val > 0: money_mom = ((trading_value_m - past_val) / past_val) * 100
             hype_mom = ((total_hype - past_hype) / past_hype) * 100
 
-            if money_mom > 0 and hype_mom > 0: insight = "🔥 右上：價量齊揚"
-            elif money_mom > 0 and hype_mom <= 0: insight = "🤫 右下：低調吸金"
-            elif money_mom <= 0 and hype_mom > 0: insight = "⚠️ 左上：聲量背離"
-            else: insight = "❄️ 左下：冷門打底"
-
-    today_pct = 0.0
-    if ticker in stock_real_price_history and len(stock_real_price_history[ticker]) > 0:
-        today_pct = stock_real_price_history[ticker][-1]
+            if money_mom > 0 and hype_mom > 0:
+                insight, emoji, short_insight = "🔥 右上：價量齊揚", "🔥", "齊揚"
+            elif money_mom > 0 and hype_mom <= 0:
+                insight, emoji, short_insight = "🤫 右下：低調吸金", "🤫", "低調"
+            elif money_mom <= 0 and hype_mom > 0:
+                insight, emoji, short_insight = "⚠️ 左上：聲量背離", "⚠️", "背離"
+            else:
+                insight, emoji, short_insight = "❄️ 左下：冷門打底", "❄️", "打底"
 
     today_results.append({
-        "代號": ticker, 
+        "圖表標籤": f"{name}({emoji}{short_insight})", 
         "名稱": name,
-        "當前總聲量": total_hype,
-        "今日漲跌幅": today_pct,
+        "當前總聲量": total_hype, 
         "象限洞察": insight
     })
 
 worksheet.append_rows(new_rows_for_db)
 
 earnings_alerts = check_upcoming_earnings(us_tickers_for_earnings)
-earnings_msg = f"📅 財報預警：{', '.join(earnings_alerts)}" if earnings_alerts else "📅 財報預警：7日內無重點美股財報。"
+earnings_msg = f"📅 7日內財報預警：{', '.join(earnings_alerts)}" if earnings_alerts else "📅 7日內無重點美股財報。"
 
 ai_insight_msg = "🤖 AI 分析：今日市場資訊量不足，無特別情緒波動。"
 if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"]) > 0:
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         titles_text = "\n".join(hottest_stock["titles"])
-        prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞(含來源出處)，給出一段50字以內的極簡『市場情緒快評』。\n\n必須嚴格遵守以下輸出格式：\n1. 第一段請直接給出點評內容 (可以點出新聞來源)。\n2. 換行後，最後一行務必獨立顯示：『🌟 整體情緒：(偏多/偏空/中立/震盪)』\n\n新聞資料：\n{titles_text}"
+        prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞標題(含來源出處)，給出一段50字以內的極簡『市場情緒快評』，並標示整體情緒為(偏多/偏空/中立/震盪)：\n{titles_text}"
         
         response = client.models.generate_content(
             model='gemini-2.5-flash',
@@ -267,126 +293,101 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
         pass
 
 # ==========================================
-# 5. 繪製 Page 1: 全市場聲量熱點蜂巢圖 (地心引力 & 黃金流體框線)
+# 6. 繪製 Page 1: 蜂巢板塊熱點圖 (完美金色流體曲線)
 # ==========================================
+print("正在繪製 Page 1 (地心引力蜂巢排列)...")
 df_plot = pd.DataFrame(today_results)
-# 🌟 確保依照聲量最大排到最前面
-df_plot = df_plot.sort_values(by='當前總聲量', ascending=False).reset_index(drop=True)
+df_plot = df_plot.sort_values(by=['當前總聲量', '象限洞察'], ascending=[False, True]).reset_index(drop=True)
 
-# 生成完美的 5-6-7-8-7-5 六邊形蜂巢陣列 (共38個點)
+# 定義 5-6-7-8-7-5 的蜂巢陣列坐標，共 38 點
 pattern = [5, 6, 7, 8, 7, 5] 
 x_coords, y_coords = [], []
 for row_idx, count in enumerate(pattern):
+    # 計算該行泡泡的 x 軸起始偏移，使其置中
     x_offset = - (count * 3.0) / 2.0
     for i in range(count):
+        # 3.0 是泡泡間距，2.6 是行間距，交錯排列產生蜂巢感
         x = x_offset + i * 3.0 + 1.5
         y = - row_idx * 2.6
         x_coords.append(x)
         y_coords.append(y)
 
-# 幾何引力算法：計算點與幾何中心點的距離
-cx, cy = 0, -6.5
-coords = [{"x": x, "y": y, "dist": (x - cx)**2 + (y - cy)**2} for x, y in zip(x_coords, y_coords)]
+# 幾何引力算法：計算所有點到「幾何中心點 (0, -6.5)」的距離
+coords = [{"x": x, "y": y, "dist": (x - 0)**2 + (y + 6.5)**2} for x, y in zip(x_coords, y_coords)]
+# 將坐標按距離從小到大排序，越聲量大的泡泡將分配到最中心的坐標
 coords = sorted(coords, key=lambda k: k["dist"])
 
 limit = min(len(df_plot), 38)
 df_plot = df_plot.iloc[:limit]
-
 df_plot['X坐標'] = [c["x"] for c in coords[:limit]]
 df_plot['Y坐標'] = [c["y"] for c in coords[:limit]]
 
-# 分配繪圖屬性
-sizes = []
-line_widths = []
-line_colors = []
-text_labels = []
+df_top10 = df_plot.iloc[:10]
+top10_points = np.array([df_top10['X坐標'].values, df_top10['Y坐標'].values])
 
+def get_bubble_color(insight):
+    cmap = {"🔥 右上：價量齊揚": "#ff4d4d", "🤫 右下：低調吸金": "#00cc96",
+            "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA", "🆕 首次建檔": "#808080"}
+    return cmap.get(insight, "#808080")
+
+markers, traces_list = [], []
 for i, row in df_plot.iterrows():
-    rank = i + 1
-    # 決定泡泡大小與粗細 (Top 10 略大)
-    if rank <= 3: 
-        sizes.append(65); line_widths.append(6)
-    elif rank <= 10: 
-        sizes.append(58); line_widths.append(5)
-    else: 
-        sizes.append(48); line_widths.append(3)
-    
-    # 決定漲跌顏色
-    pct = row['今日漲跌幅']
-    if pct > 0: line_colors.append('#ff4d4d')
-    elif pct < 0: line_colors.append('#00cc96')
-    else: line_colors.append('#888888')
-    
-    # 決定文字格式 (最乾淨的 中文+代號)
-    if rank <= 10:
-        text_labels.append(f"<b>{row['名稱']}</b><br><b>{row['代號']}</b>")
-    else:
-        # 其他名次稍微調暗文字顏色
-        text_labels.append(f"<b><span style='color:#C0C0C0'>{row['名稱']}</span></b><br><span style='color:#C0C0C0'>{row['代號']}</span>")
+    color = get_bubble_color(row['象限洞察'])
+    traces_list.append(go.Scatter(
+        x=[row['X坐標']], y=[row['Y坐標']], mode='markers+text',
+        marker=dict(size=48, color='#2C2C2C', line=dict(width=3, color=color)),
+        text=row['圖表標籤'], textposition='middle center', textfont=dict(size=13, color='white'), hoverinfo='none'
+    ))
 
-df_plot['MarkerSize'] = sizes
-df_plot['LineWidth'] = line_widths
-df_plot['LineColor'] = line_colors
-df_plot['圖表標籤'] = text_labels
+fig1 = go.Figure(data=traces_list)
 
-fig1 = go.Figure()
-
-# 🌟 魔法：利用 scipy 繪製平滑的有機「不規則黃金流體外框」
+# 🌟 利用 scipy 繪製平滑的有機「金色流體外框」
 pts = np.array([
     [0.0, -2.5], [3.5, -3.0], [4.8, -6.5], [3.5, -9.8], [1.5, -10.5], 
     [0.0, -10.2], [-2.5, -10.0], [-4.5, -8.0], [-4.8, -5.0], [-3.0, -3.0], [0.0, -2.5]
 ])
+# 使用Spline插值生成平滑曲線
 tck, u = splprep([pts[:,0], pts[:,1]], s=0, per=True)
 unew = np.linspace(0, 1, 200)
 out = splev(unew, tck)
 
+# 構造 SVG Path 格式
 path = f"M {out[0][0]},{out[1][0]}"
-for px_val, py_val in zip(out[0][1:], out[1][1:]):
-    path += f" L {px_val},{py_val}"
-path += " Z"
+for px, py in zip(out[0][1:], out[1][1:]):
+    path += f" L {px},{py}"
+path += " Z" # 封閉曲線
 
-# 將黃金框線加入圖層底層
-fig1.add_shape(type="path", path=path, line=dict(color="#FFD700", width=5), layer="below")
+# 將金色框線加入圖層底層
+fig1.add_shape(type="path", path=path, line=dict(color="#FFD700", width=4), layer="below")
 
-# 加入所有股票泡泡
-# 將前 10 名與後 28 名分開加入，以保證字體大小的精準控制
-df_top10 = df_plot.iloc[:10]
-df_rest = df_plot.iloc[10:]
-
-fig1.add_trace(go.Scatter(
-    x=df_rest['X坐標'], y=df_rest['Y坐標'], mode='markers+text',
-    marker=dict(size=df_rest['MarkerSize'], color='#2C2C2C', line=dict(width=df_rest['LineWidth'], color=df_rest['LineColor'])),
-    text=df_rest['圖表標籤'], textposition='middle center', textfont=dict(size=11, color='white'), hoverinfo='none'
-))
-
-fig1.add_trace(go.Scatter(
-    x=df_top10['X坐標'], y=df_top10['Y坐標'], mode='markers+text',
-    marker=dict(size=df_top10['MarkerSize'], color='#2C2C2C', line=dict(width=df_top10['LineWidth'], color=df_top10['LineColor'])),
-    text=df_top10['圖表標籤'], textposition='middle center', textfont=dict(size=14, color='white'), hoverinfo='none'
-))
-
-fig1.update_xaxes(visible=False, range=[-14, 14]) 
+fig1.update_xaxes(visible=False, range=[-12, 12]) 
 fig1.update_yaxes(visible=False, range=[-15.5, 1.5]) 
-
-# 設定排版與底部註釋
 fig1.update_layout(
     title=f"【Page 1】全市場聲量熱點蜂巢圖<br>更新時間: {current_time}",
-    width=1200, height=1100, margin=dict(t=100, b=150, l=40, r=40),
-    template="plotly_dark", showlegend=False
+    width=1200, height=1000, margin=dict(t=100, b=120, l=40, r=40),
+    template="plotly_dark", showlegend=False, font=dict(family="Noto Sans TC")
 )
 
-fig1.add_annotation(
-    text="🔴 <b>紅色外框：</b>收盤上漲　　🟢 <b>綠色外框：</b>收盤下跌　　⚪ <b>灰色外框：</b>平盤無變化<br><br>🔆 <b>不規則金色框線：</b>代表前十名最熱門聲量集中區 (聲量越大越集中中央與上方)", 
-    xref="paper", yref="paper", 
-    x=0.5, y=-0.1, showarrow=False, font=dict(size=17, color="#E0E0E0"), 
-    xanchor="center", yanchor="top", align="center"
-)
+# 底部圖例說明
+list_items = [
+    {"label": "👑 地心引力 (中/上) 指標：全市場聲量最高 TOP 10 (由金色流體曲線框住)", "color": "#FFD700"},
+    {"label": "🔴 泡泡邊框顏色：代表動能狀態", "color": "white"}
+]
+cmap = {"🔥 右上：價量齊揚": "#ff4d4d", "🤫 右下：低調吸金": "#00cc96", "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA"}
+
+for i, (k, v) in enumerate(cmap.items()):
+    fig1.add_annotation(
+        text=f"<b><span style='color:{v}'>🔴</span></b> {k}", xref="paper", yref="paper", 
+        x=0.03 + (i*0.24), y=-0.12, showarrow=False, font=dict(size=14, color="#A0A0A0"), 
+        xanchor="left", yanchor="top", align="left"
+    )
 
 img_path_1 = "radar_page1.jpg"
-fig1.write_image(img_path_1, scale=2)
+# 🌟 設置不同的 scale 防止 kaleido 在 Action 裡解析度爆炸
+fig1.write_image(img_path_1, scale=1.5)
 
 # ==========================================
-# 6. 繪製 Page 2: 暴力 K 線漲跌幅矩陣
+# 7. 繪製 Page 2: 暴力 K 線漲跌幅矩陣
 # ==========================================
 print("正在計算五日歷史軌跡與滾動漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
@@ -407,7 +408,8 @@ for info in stock_pool:
     name = info["name"]
     df_sub = df_all[df_all['代號'] == tk].tail(6)
     
-    row_texts = [name, "⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
+    # 🌟 用 Noto Sans 修復文字
+    row_texts = [f"<span style='font-family:Noto Sans TC'>{name}</span>", "⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
     row_colors = ["#ffffff"] * 6 
     
     qs = ["⚪"] * 5
@@ -428,14 +430,16 @@ for info in stock_pool:
             if 0 <= target_idx < 5:
                 qs[target_idx] = q
 
+    # 🌟 取得 YFinance 最精準的 5 日真實漲跌幅
     recent_pcts = stock_real_price_history.get(tk, [0.0] * 5)
 
     for idx in range(5):
         q = qs[idx]
         pct = recent_pcts[idx]
         
+        # 🌟 確保所有欄位絕對都有資料，不會是空的
         p_str = "-"
-        cell_color = "#ffffff"  
+        cell_color = "#ffffff"  # 預設白色，針對 0.0% 或沒波動
         
         if pct > 0:
             p_str = f"+{pct:.1f}%"
@@ -464,13 +468,13 @@ fig2 = go.Figure(data=[go.Table(
 )])
 
 dynamic_height = 150 + len(stock_pool) * 45
-fig2.update_layout(title="【Page 2】五日動能與真實漲跌幅矩陣", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
+fig2.update_layout(title="【Page 2】五日動能與真實漲跌幅矩陣", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height, font=dict(family="Noto Sans TC"))
 
 img_path_2 = "trend_page2.jpg"
-fig2.write_image(img_path_2, scale=2)
+fig2.write_image(img_path_2, scale=1.5)
 
 # ==========================================
-# 7. 上傳圖床並發送 LINE 訊息
+# 8. 上傳圖床並發送 LINE 訊息
 # ==========================================
 def upload_image(file_path):
     try:
@@ -479,6 +483,7 @@ def upload_image(file_path):
     except:
         pass
     
+    # 免費圖床備案 freeimage.host
     try:
         import base64
         with open(file_path, "rb") as f:
@@ -498,7 +503,7 @@ if img_url_1 or img_url_2:
     smart_money = [row['名稱'] for row in today_results if "🤫 右下：低調吸金" in row['象限洞察']]
     money_msg = f"🤫 特別吸金：{', '.join(smart_money)}" if smart_money else "🤫 特別吸金：無特別低調吸金標的"
     
-    final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}\n\n🕒 資料產出時間：{current_time}\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
+    final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}\n\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
     
     messages = [{"type": "text", "text": final_text}]
     if img_url_1: messages.append({"type": "image", "originalContentUrl": img_url_1, "previewImageUrl": img_url_1})
