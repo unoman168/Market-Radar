@@ -18,7 +18,7 @@ import platform
 import subprocess
 from scipy.interpolate import splprep, splev
 
-print("啟動【跨國巨頭 38 檔：完美蜂巢 & 暴力K線防禦版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：完美蜂巢 & 終極API防禦版】法人戰情機器人...")
 
 # ==========================================
 # 1. 系統級安裝中文字型 (防禦亂碼方塊)
@@ -92,7 +92,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據與暴力 K 線過濾 (修復藥華藥無價格問題)
+# 4. 抓取數據與雙重 API 暴力 K 線防禦
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -161,27 +161,43 @@ for info in stock_pool:
     stock_real_price_history[ticker] = [0.0] * 5
     
     try:
+        closes, vols = [], []
+        
+        # --- 防護網 1: 正常 YFinance 抓取 ---
         stock = yf.Ticker(yf_ticker)
-        hist = stock.history(period="15d") 
+        hist = stock.history(period="1mo") 
         if not hist.empty and 'Close' in hist.columns:
-            # 🌟 只過濾掉收盤價為 NaN 的天數，包容成交量遺失 (YFinance 台股常見 Bug)
             df_close = hist.dropna(subset=['Close'])
-            
             if not df_close.empty:
                 closes = df_close['Close'].tolist()
-                current_price = float(closes[-1])
-                
-                # 安全獲取成交量
                 vols = df_close['Volume'].fillna(0).tolist() if 'Volume' in df_close.columns else [0]*len(closes)
-                current_vol = float(vols[-1])
-                trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
                 
-                if len(closes) >= 2:
-                    pcts = [((closes[i] - closes[i-1]) / closes[i-1]) * 100 for i in range(1, len(closes))]
-                    last_5 = pcts[-5:]
-                    while len(last_5) < 5: last_5.insert(0, 0.0)
-                    stock_real_price_history[ticker] = last_5
-                    
+        # --- 🌟 防護網 2: 終極 API 備援 (專治藥華藥抓不到的問題) ---
+        if len(closes) < 2:
+            try:
+                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_ticker}?range=1mo&interval=1d"
+                res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5).json()
+                quote = res['chart']['result'][0]['indicators']['quote'][0]
+                raw_c = quote.get('close', [])
+                raw_v = quote.get('volume', [])
+                valid_data = [(c, v) for c, v in zip(raw_c, raw_v) if c is not None]
+                if valid_data:
+                    closes = [x[0] for x in valid_data]
+                    vols = [x[1] if x[1] is not None else 0 for x in valid_data]
+            except:
+                pass
+
+        # --- 結算價格與漲跌幅 ---
+        if len(closes) >= 2:
+            current_price = float(closes[-1])
+            current_vol = float(vols[-1]) if vols else 0.0
+            trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
+            
+            pcts = [((closes[i] - closes[i-1]) / closes[i-1]) * 100 for i in range(1, len(closes))]
+            last_5 = pcts[-5:]
+            while len(last_5) < 5: last_5.insert(0, 0.0)
+            stock_real_price_history[ticker] = last_5
+            
         yf_news = stock.news
         yf_titles = [f"《{n.get('publisher', 'Yahoo財經')}》{n['title']}" for n in yf_news[:5]] if yf_news else []
         yf_count = len(yf_news) if yf_news else 0
@@ -252,7 +268,7 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
     except: pass
 
 # ==========================================
-# 5. 繪製 Page 1: 回歸 Plotly 完美蜂巢圖 
+# 5. 繪製 Page 1: 完美排版蜂巢圖 
 # ==========================================
 print("正在繪製 Page 1...")
 df_plot = pd.DataFrame(today_results)
@@ -278,15 +294,12 @@ sizes, line_widths, line_colors, text_labels, text_colors, text_sizes = [], [], 
 
 for i, row in df_plot.iterrows():
     rank = i + 1
-    # 控制尺寸 (完美比例)
     sizes.append(65 if rank <= 3 else (58 if rank <= 10 else 48))
     line_widths.append(6 if rank <= 3 else (5 if rank <= 10 else 3))
     
-    # 控制漲跌顏色
     pct = row['今日漲跌幅']
     line_colors.append('#ff4d4d' if pct > 0 else ('#00cc96' if pct < 0 else '#888888'))
     
-    # 加入漲跌幅顯示
     pct_str = f"+{pct:.1f}%" if pct > 0 else f"{pct:.1f}%"
     text_labels.append(f"{row['名稱']}<br>{row['代號']}<br>{pct_str}")
     
@@ -302,7 +315,6 @@ df_plot['TextSize'] = text_sizes
 
 fig1 = go.Figure()
 
-# 黃金流體結界 (scipy Spline)
 pts = np.array([
     [0.0, -2.5], [3.5, -3.0], [4.8, -6.5], [3.5, -9.8], [1.5, -10.5], 
     [0.0, -10.2], [-2.5, -10.0], [-4.5, -8.0], [-4.8, -5.0], [-3.0, -3.0], [0.0, -2.5]
@@ -325,24 +337,25 @@ fig1.add_trace(go.Scatter(
 
 fig1.update_xaxes(visible=False, range=[-14, 14]) 
 fig1.update_yaxes(visible=False, range=[-15.5, 1.5]) 
+
+# 🌟 大幅增加底部 Margin (b=180)，徹底解決文字被吃掉的問題
 fig1.update_layout(
     title=f"【Page 1】全市場聲量熱點蜂巢圖<br>更新時間: {current_time}",
-    width=1200, height=1100, margin=dict(t=100, b=120, l=40, r=40),
+    width=1200, height=1150, margin=dict(t=100, b=180, l=40, r=40),
     template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 
-# 🌟 極簡雙行註解 (利用獨立的 Annotation 強制分行，保證不亂碼)
-# 第一行：金色流體說明
+# 🌟 絕對獨立的兩行註解：利用 y 座標分開 (-0.06 與 -0.12)，絕不擠壓
 fig1.add_annotation(
     text="🔆 不規則金色流體框線：代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)", 
-    xref="paper", yref="paper", x=0.5, y=-0.08, 
-    showarrow=False, font=dict(size=16, color="#FFD700"), xanchor="center", yanchor="top"
+    xref="paper", yref="paper", x=0.5, y=-0.06, 
+    showarrow=False, font=dict(size=17, color="#FFD700"), xanchor="center", yanchor="top"
 )
-# 第二行：紅綠邊框說明
+
 fig1.add_annotation(
     text="🔴 紅色外框：收盤上漲　　🟢 綠色外框：收盤下跌　　⚪ 灰色外框：平盤無變化", 
-    xref="paper", yref="paper", x=0.5, y=-0.13, 
-    showarrow=False, font=dict(size=15, color="#E0E0E0"), xanchor="center", yanchor="top"
+    xref="paper", yref="paper", x=0.5, y=-0.12, 
+    showarrow=False, font=dict(size=16, color="#E0E0E0"), xanchor="center", yanchor="top"
 )
 
 fig1.write_image("radar_page1.jpg", scale=2)
