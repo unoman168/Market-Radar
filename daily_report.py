@@ -92,7 +92,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據與暴力 K 線過濾 (抓 15 天留 5 天)
+# 4. 抓取數據與暴力 K 線過濾 (修復上櫃股票抓取問題)
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -149,15 +149,21 @@ stock_real_price_history = {}
 for info in stock_pool:
     ticker, name, market, kw = info["ticker"], info["name"], info["market"], info["keywords"][0]
     rate = exchange_rates.get(market, 1.0)
-    if market == "US": us_tickers_for_earnings.append(ticker)
+    
+    # 🌟 自動轉換 YFinance 上櫃代號後綴，解決旺矽/藥華藥抓不到資料的問題
+    yf_ticker = ticker
+    if ticker in ["6223.TW", "6446.TW"]:
+        yf_ticker = ticker.replace(".TW", ".TWO")
+        
+    if market == "US": us_tickers_for_earnings.append(yf_ticker)
     
     current_price, trading_value_m = 0.0, 0.0
     yf_titles, yf_count = [], 0
     stock_real_price_history[ticker] = [0.0] * 5
     
     try:
-        stock = yf.Ticker(ticker)
-        # 🌟 終極暴力抓取：往前抓 15 天，然後清掉所有 NaN
+        stock = yf.Ticker(yf_ticker)
+        # 往前抓 15 天，然後清掉所有 NaN
         hist = stock.history(period="15d") 
         if not hist.empty and 'Close' in hist.columns:
             df_valid = hist.dropna(subset=['Close', 'Volume'])
@@ -170,9 +176,7 @@ for info in stock_pool:
                 trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
                 
                 if len(closes) >= 2:
-                    # 純粹數學計算
                     pcts = [((closes[i] - closes[i-1]) / closes[i-1]) * 100 for i in range(1, len(closes))]
-                    # 確保只拿最後 5 天
                     last_5 = pcts[-5:]
                     while len(last_5) < 5: last_5.insert(0, 0.0)
                     stock_real_price_history[ticker] = last_5
@@ -247,7 +251,7 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
     except: pass
 
 # ==========================================
-# 5. 繪製 Page 1: 回歸 Plotly 完美蜂巢圖 (杜絕 HTML，確保安全)
+# 5. 繪製 Page 1: 回歸 Plotly 完美蜂巢圖 
 # ==========================================
 print("正在繪製 Page 1...")
 df_plot = pd.DataFrame(today_results)
@@ -281,7 +285,7 @@ for i, row in df_plot.iterrows():
     pct = row['今日漲跌幅']
     line_colors.append('#ff4d4d' if pct > 0 else ('#00cc96' if pct < 0 else '#888888'))
     
-    # 🌟 絕對純淨文字 (沒有 HTML)，加入漲跌幅顯示
+    # 🌟 加入漲跌幅顯示
     pct_str = f"+{pct:.1f}%" if pct > 0 else f"{pct:.1f}%"
     text_labels.append(f"{row['名稱']}<br>{row['代號']}<br>{pct_str}")
     
@@ -310,7 +314,6 @@ for px, py in zip(out[0][1:], out[1][1:]): path += f" L {px},{py}"
 path += " Z"
 fig1.add_shape(type="path", path=path, line=dict(color="#FFD700", width=4), layer="below")
 
-# 🌟 回歸 Plotly 原生渲染 (絕對不會破圖)
 fig1.add_trace(go.Scatter(
     x=df_plot['X坐標'], y=df_plot['Y坐標'], mode='markers+text',
     marker=dict(size=df_plot['MarkerSize'], color='#2C2C2C', line=dict(width=df_plot['LineWidth'], color=df_plot['LineColor'])),
@@ -327,8 +330,9 @@ fig1.update_layout(
     template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 
+# 🌟 優化註解排版：黃金流體在上，紅綠灰顏色定義在下
 fig1.add_annotation(
-    text="🔴 <b>紅色外框：</b>收盤上漲　　🟢 <b>綠色外框：</b>收盤下跌　　⚪ <b>灰色外框：</b>平盤無變化<br><br>🔆 <b>不規則金色框線：</b>代表前十名最熱門聲量集中區 (聲量越大越集中中央與上方)", 
+    text="🔆 <b>不規則金色流體框線：</b>代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)<br><br>🔴 <b>紅色外框：</b>收盤上漲　　🟢 <b>綠色外框：</b>收盤下跌　　⚪ <b>灰色外框：</b>平盤無變化", 
     xref="paper", yref="paper", x=0.5, y=-0.1, showarrow=False, font=dict(size=17, color="#E0E0E0"), xanchor="center", yanchor="top"
 )
 
