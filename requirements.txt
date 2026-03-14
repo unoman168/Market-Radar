@@ -1,7 +1,12 @@
-streamlit
-yfinance
-pandas
-plotly
 requests
+pandas
+numpy
+yfinance
+plotly
+kaleido
 feedparser
-pytz
+google-auth
+gspread
+google-genai
+praw
+scipy
