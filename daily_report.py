@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 import pytz
 import requests
 import pandas as pd
-import numpy as np
 import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
@@ -16,7 +15,7 @@ import gspread
 from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：板塊熱點圖 & 雙軌資料源版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：圓形熱點陣列 & 暴力 K 線抓取版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -100,7 +99,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據與建立雙軌資料庫 (38檔名單)
+# 4. 抓取數據 (38檔名單) 與暴力 K 線萃取
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -154,7 +153,7 @@ new_rows_for_db = []
 hottest_stock = {"name": "", "hype": 0, "titles": []}
 us_tickers_for_earnings = []
 
-# 🌟 新增：獨立保存最乾淨的 YFinance 真實漲跌幅陣列
+# 🌟 暴力 K 線儲存庫
 stock_real_price_history = {}
 
 for info in stock_pool:
@@ -162,37 +161,37 @@ for info in stock_pool:
     rate = exchange_rates.get(market, 1.0)
     if market == "US": us_tickers_for_earnings.append(ticker)
     
+    current_price, trading_value_m = 0.0, 0.0
+    yf_titles, yf_count = [], 0
+    stock_real_price_history[ticker] = [0.0] * 5
+    
     try:
         stock = yf.Ticker(ticker)
-        # 抓取近 10 日 K 線以確保有足夠的交易日計算漲跌幅
-        hist = stock.history(period="10d")
-        
-        if not hist.empty:
-            current_price = float(hist['Close'].iloc[-1])
-            current_vol = float(hist['Volume'].iloc[-1])
-            trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
+        # 暴力抓 15 天，確保扣掉假日後還有 6 個交易日可以算 5 天的漲跌幅
+        hist = stock.history(period="15d")
+        if not hist.empty and 'Close' in hist.columns:
+            # 強制剔除 NaN，只拿真實有交易的收盤價
+            closes = hist['Close'].dropna().tolist()
+            vols = hist['Volume'].dropna().tolist()
             
-            # 💡 核心解耦：直接在這裡計算過去 5 天的真實交易日漲跌幅，不再依賴 Google Sheets！
-            if len(hist) >= 2:
-                closes = hist['Close'].values
-                pcts = np.diff(closes) / closes[:-1] * 100
-                last_5_pcts = list(pcts[-5:])
-                # 如果新上市資料不足 5 天，用 0.0 補齊前方
-                while len(last_5_pcts) < 5: last_5_pcts.insert(0, 0.0)
-                stock_real_price_history[ticker] = last_5_pcts
-            else:
-                stock_real_price_history[ticker] = [0.0] * 5
-        else:
-            current_price, trading_value_m = 0.0, 0.0
-            stock_real_price_history[ticker] = [0.0] * 5
-            
+            if len(closes) > 0:
+                current_price = float(closes[-1])
+                current_vol = float(vols[-1]) if len(vols) > 0 else 0.0
+                trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
+                
+                # 計算過去 5 次的真實單日漲跌幅
+                if len(closes) >= 2:
+                    pcts = [((closes[i] - closes[i-1]) / closes[i-1]) * 100 for i in range(1, len(closes))]
+                    last_5 = pcts[-5:]
+                    # 不滿 5 天的前面補 0
+                    while len(last_5) < 5: last_5.insert(0, 0.0)
+                    stock_real_price_history[ticker] = last_5
+                    
         yf_news = stock.news
         yf_titles = [n['title'] for n in yf_news[:5]] if yf_news else []
         yf_count = len(yf_news) if yf_news else 0
     except Exception as e:
-        current_price, trading_value_m = 0.0, 0.0
-        yf_titles, yf_count = [], 0
-        stock_real_price_history[ticker] = [0.0] * 5
+        pass
 
     news_info = get_news_data(kw)
     combined_titles = yf_titles + news_info["titles"]
@@ -213,7 +212,7 @@ for info in stock_pool:
     new_rows_for_db.append([today_str, ticker, name, market, current_price, trading_value_m, total_hype])
 
     money_mom, hype_mom = 0, 0
-    insight, emoji = "🆕 首次建檔", "⚪"
+    insight, emoji, short_insight = "🆕 首次建檔", "⚪", "首次"
 
     if not df_history.empty:
         df_history['日期_格式化'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
@@ -232,15 +231,20 @@ for info in stock_pool:
             if past_val > 0: money_mom = ((trading_value_m - past_val) / past_val) * 100
             hype_mom = ((total_hype - past_hype) / past_hype) * 100
 
-            if money_mom > 0 and hype_mom > 0: insight, emoji = "🔥 右上：價量齊揚", "🔥"
-            elif money_mom > 0 and hype_mom <= 0: insight, emoji = "🤫 右下：低調吸金", "🤫"
-            elif money_mom <= 0 and hype_mom > 0: insight, emoji = "⚠️ 左上：聲量背離", "⚠️"
-            else: insight, emoji = "❄️ 左下：冷門打底", "❄️"
+            if money_mom > 0 and hype_mom > 0:
+                insight, emoji, short_insight = "🔥 右上：價量齊揚", "🔥", "齊揚"
+            elif money_mom > 0 and hype_mom <= 0:
+                insight, emoji, short_insight = "🤫 右下：低調吸金", "🤫", "低調"
+            elif money_mom <= 0 and hype_mom > 0:
+                insight, emoji, short_insight = "⚠️ 左上：聲量背離", "⚠️", "背離"
+            else:
+                insight, emoji, short_insight = "❄️ 左下：冷門打底", "❄️", "打底"
 
     today_results.append({
-        "圖表標籤": f"{emoji} {name}", "名稱": name,
-        "資金動能變化 (%)": round(money_mom, 2), "聲量動能變化 (%)": round(hype_mom, 2),
-        "當前總聲量": total_hype, "象限洞察": insight
+        "圖表標籤": f"{name}({emoji}{short_insight})", 
+        "名稱": name,
+        "當前總聲量": total_hype, 
+        "象限洞察": insight
     })
 
 worksheet.append_rows(new_rows_for_db)
@@ -264,7 +268,7 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
         pass
 
 # ==========================================
-# 5. 繪製 Page 1: 板塊熱點圖 (Treemap)
+# 5. 繪製 Page 1: 圓形熱點陣列 (Bubble Grid)
 # ==========================================
 df_plot = pd.DataFrame(today_results)
 q_lists = {"🔥 右上：價量齊揚": [], "🤫 右下：低調吸金": [], "⚠️ 左上：聲量背離": [], "❄️ 左下：冷門打底": [], "🆕 首次建檔": []}
@@ -279,33 +283,24 @@ if q_lists["🔥 右上：價量齊揚"]: list_text += f"🔥 價量齊揚：{wr
 if q_lists["🤫 右下：低調吸金"]: list_text += f"🤫 低調吸金：{wrap_list(q_lists['🤫 右下：低調吸金'])}<br>"
 if q_lists["⚠️ 左上：聲量背離"]: list_text += f"⚠️ 聲量背離：{wrap_list(q_lists['⚠️ 左上：聲量背離'])}<br>"
 if q_lists["❄️ 左下：冷門打底"]: list_text += f"❄️ 冷門打底：{wrap_list(q_lists['❄️ 左下：冷門打底'])}<br>"
-if q_lists["🆕 首次建檔"]: list_text += f"🆕 首次建檔：{wrap_list(q_lists['🆕 首次建檔'])}"
 
-# 🌟 重構為板塊熱點圖 (Treemap)，面積=總聲量，顏色=象限洞察
-fig1 = px.treemap(
-    df_plot,
-    path=[px.Constant("全市場動能板塊"), '象限洞察', '名稱'],
-    values='當前總聲量',
-    color='象限洞察',
-    color_discrete_map={
-        "🔥 右上：價量齊揚": "#EF553B", 
-        "🤫 右下：低調吸金": "#00CC96", 
-        "⚠️ 左上：聲量背離": "#AB63FA", 
-        "❄️ 左下：冷門打底": "#636EFA", 
-        "🆕 首次建檔": "#808080"
-    },
-    title=f"【Page 1】全市場聲量板塊熱點圖<br>更新時間: {current_time}",
-    template="plotly_dark"
+# 🌟 構造絕對不重疊的排列陣列 (同一狀態的股票往右排隊)
+df_plot = df_plot.sort_values(by=['象限洞察', '當前總聲量'], ascending=[True, False])
+df_plot['X坐標'] = df_plot.groupby('象限洞察').cumcount() + 1
+
+fig1 = px.scatter(
+    df_plot, x="X坐標", y="象限洞察", size="當前總聲量", color="象限洞察",
+    text="圖表標籤", title=f"【Page 1】全市場熱點泡泡陣列<br>更新時間: {current_time}",
+    size_max=45, template="plotly_dark",
+    color_discrete_map={"🔥 右上：價量齊揚": "#EF553B", "🤫 右下：低調吸金": "#00CC96",
+                        "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA", "🆕 首次建檔": "#808080"}
 )
 
-# 設定 Treemap 文字格式
-fig1.update_traces(
-    textinfo="label+value",
-    texttemplate="<b>%{label}</b><br>聲量: %{value}",
-    hovertemplate="<b>%{label}</b><br>總聲量: %{value}<br>所屬板塊: %{parent}"
-)
+fig1.update_traces(textposition='bottom center', textfont_size=13, cliponaxis=False)
+fig1.update_xaxes(visible=False) # 隱藏底部的數字軸，讓畫面更像熱點圖
+fig1.update_yaxes(title="")
 
-fig1.update_layout(width=1200, height=1100, margin=dict(t=100, b=350, l=40, r=40))
+fig1.update_layout(width=1200, height=1000, margin=dict(t=120, b=300, l=20, r=20), showlegend=False)
 
 footer_text = "<b>【象限定義】</b> 🔥 價量齊揚(強勢噴出) ｜ 🤫 低調吸金(潛伏買點) ｜ ⚠️ 聲量背離(出場警示) ｜ ❄️ 冷門打底" + list_text
 fig1.add_annotation(
@@ -318,7 +313,7 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 真實行情解耦矩陣版
+# 6. 繪製 Page 2: 暴力 K 線漲跌幅矩陣
 # ==========================================
 print("正在計算五日歷史軌跡與滾動漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
@@ -326,7 +321,6 @@ df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
 
 df_all['日期_格式化'] = pd.to_datetime(df_all['日期']).dt.strftime('%Y-%m-%d')
-# 我們只保留動能相關數據，股價已由上方 YFinance 直接計算
 df_all['成交金額_百萬美元'] = pd.to_numeric(df_all['成交金額_百萬美元'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 df_all['總聲量'] = pd.to_numeric(df_all['總聲量'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 df_all = df_all.drop_duplicates(subset=['代號', '日期_格式化'], keep='last')
@@ -343,7 +337,7 @@ for info in stock_pool:
     row_texts = [name, "⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
     row_colors = ["#ffffff"] * 6 
     
-    # 步驟 1：從資料庫萃取「動能象限符號 (Emoji)」
+    # 萃取動能符號
     qs = ["⚪"] * 5
     if len(df_sub) >= 2:
         vals = df_sub['成交金額_百萬美元'].values
@@ -362,10 +356,9 @@ for info in stock_pool:
             if 0 <= target_idx < 5:
                 qs[target_idx] = q
 
-    # 步驟 2：從 YFinance 獨立矩陣取出「最真實的 5 日漲跌幅」
+    # 取得 YFinance 最精準的 5 日真實漲跌幅
     recent_pcts = stock_real_price_history.get(tk, [0.0] * 5)
 
-    # 步驟 3：完美拼裝 Emoji 與真實漲跌幅！
     for idx in range(5):
         q = qs[idx]
         pct = recent_pcts[idx]
@@ -373,7 +366,6 @@ for info in stock_pool:
         p_str = "-"
         cell_color = "#ffffff"  
         
-        # 只要 YFinance 有抓到行情，就絕對會顯示顏色！
         if pct > 0:
             p_str = f"+{pct:.1f}%"
             cell_color = "#ff4d4d"
@@ -397,11 +389,11 @@ headers = ['<b>標的名稱</b>', '<b>T-4</b>', '<b>T-3</b>', '<b>T-2</b>', '<b>
 fig2 = go.Figure(data=[go.Table(
     columnwidth=[100, 100, 100, 100, 100, 100],
     header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
-    cells=dict(values=col_data, fill_color='#1e1e1e', font=dict(color=col_colors, size=14), align='center', height=35)
+    cells=dict(values=col_data, fill_color='#1e1e1e', font=dict(color=col_colors, size=15), align='center', height=45)
 )])
 
-dynamic_height = 150 + len(stock_pool) * 35
-fig2.update_layout(title="【Page 2】五日動能與漲跌幅矩陣 (真實行情版)", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
+dynamic_height = 150 + len(stock_pool) * 45
+fig2.update_layout(title="【Page 2】五日動能與真實漲跌幅矩陣", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
 
 img_path_2 = "trend_page2.jpg"
 fig2.write_image(img_path_2, scale=2)
@@ -434,7 +426,9 @@ if img_url_1 or img_url_2:
     print("準備發送終極戰情 LINE...")
     smart_money = [row['名稱'] for row in today_results if "低調吸金" in row['象限洞察']]
     money_msg = f"🟢 今日主力悄悄吃貨標的：{', '.join(smart_money)}" if smart_money else "無特別低調吸金標的"
-    final_text = f"早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}"
+    
+    # 🌟 修改訊息格式：加上時間標記與檢索關鍵字
+    final_text = f"早安！為您送上今日全市場動能雷達。(資料產出時間：{current_time})\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}\n\n🏷️ 檢索用標籤：\n#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
     
     messages = [{"type": "text", "text": final_text}]
     if img_url_1: messages.append({"type": "image", "originalContentUrl": img_url_1, "previewImageUrl": img_url_1})
