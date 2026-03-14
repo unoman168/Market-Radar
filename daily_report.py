@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import urllib.parse
@@ -8,37 +9,44 @@ import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import plotly.express as px
 import plotly.graph_objects as go
 import feedparser
 from google.oauth2.service_account import Credentials
 import gspread
 from google import genai
 import praw
+import platform
+import subprocess
 import matplotlib.pyplot as plt
-import io
 from scipy.interpolate import splprep, splev
+import matplotlib.font_manager as fm
 
-print("啟動【跨國巨頭 38 檔：地心引力 & 黃金流體結界版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：地心引力 & 黃金流體結界 (純淨穩定版)】法人戰情機器人...")
 
-# --- 1. 解決亂碼：自動安裝中文字型 ---
-try:
-    print("正在安裝中文字型，以利kaleido正確渲染...")
-    # 下載 Google Noto Sans TC (繁體中文)
-    font_url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansTC/NotoSansTC-Regular.ttf"
-    font_path = "NotoSansTC-Regular.ttf"
-    if not os.path.exists(font_path):
-        requests.get(font_url) # 下載
-    
-    import matplotlib.font_manager as fm
-    fe = fm.FontEntry(fname=font_path, name='Noto Sans TC')
-    fm.fontManager.ttflist.insert(0, fe)
-    plt.rcParams['font.sans-serif'] = ['Noto Sans TC']
-    print("中文字型 Noto Sans TC 安裝成功。")
-except Exception as e:
-    print(f"字型安裝失敗: {e}")
+# ==========================================
+# 1. 系統級安裝中文字型 (絕對防禦亂碼)
+# ==========================================
+font_path_local = "NotoSansTC-Regular.ttf"
+if not os.path.exists(font_path_local):
+    print("正在下載 Noto Sans TC 中文字型...")
+    url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansTC/NotoSansTC-Regular.ttf"
+    urllib.request.urlretrieve(url, font_path_local)
 
-# 2. 讀取金鑰
+if platform.system() == "Linux":
+    font_dir = os.path.expanduser("~/.fonts")
+    os.makedirs(font_dir, exist_ok=True)
+    sys_font_path = os.path.join(font_dir, "NotoSansTC-Regular.ttf")
+    if not os.path.exists(sys_font_path):
+        import shutil
+        shutil.copy(font_path_local, sys_font_path)
+        subprocess.run(["fc-cache", "-f", "-v"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+# 載入字型給 Matplotlib 使用
+font_prop = fm.FontProperties(fname=font_path_local)
+
+# ==========================================
+# 2. 讀取金鑰與初始化
+# ==========================================
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 gcp_sa_key_json = os.getenv('GCP_SA_KEY')
@@ -46,27 +54,18 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 REDDIT_CLIENT_ID = os.getenv('REDDIT_CLIENT_ID')
 REDDIT_CLIENT_SECRET = os.getenv('REDDIT_CLIENT_SECRET')
 
-# 初始化 Reddit API
 reddit = None
 if REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET:
-    try:
-        reddit = praw.Reddit(
-            client_id=REDDIT_CLIENT_ID,
-            client_secret=REDDIT_CLIENT_SECRET,
-            user_agent="python:market-radar-bot:v1.0 (by /u/investor)"
-        )
-    except Exception as e:
-        print(f"Reddit 初始化失敗: {e}")
+    try: reddit = praw.Reddit(client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_CLIENT_SECRET, user_agent="market-bot")
+    except: pass
 
-# 3. 登入 Google Sheets
 creds_dict = json.loads(gcp_sa_key_json)
 scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
 gc = gspread.authorize(creds)
 
-sheet_name = "全市場聲量動能資料庫"
 try:
-    sh = gc.open(sheet_name)
+    sh = gc.open("全市場聲量動能資料庫")
     worksheet = sh.sheet1
 except Exception as e:
     print(f"找不到資料庫: {e}")
@@ -74,57 +73,41 @@ except Exception as e:
 
 df_history = pd.DataFrame(worksheet.get_all_records())
 
-# 4. 爬蟲函數群
+# ==========================================
+# 3. 爬蟲函數群
+# ==========================================
 def get_news_data(keyword, limit=5):
-    query = f'"{keyword}"'
-    encoded_keyword = urllib.parse.quote(query)
-    url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    encoded = urllib.parse.quote(f'"{keyword}"')
+    url = f"https://news.google.com/rss/search?q={encoded}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     try:
         feed = feedparser.parse(url)
-        titles = []
-        for entry in feed.entries[:limit]:
-            source = entry.source.title if hasattr(entry, 'source') else "新聞"
-            titles.append(f"《{source}》{entry.title}")
+        titles = [f"《{e.source.title if hasattr(e, 'source') else '新聞'}》{e.title}" for e in feed.entries[:limit]]
         return {"count": len(feed.entries), "titles": titles}
-    except:
-        return {"count": 0, "titles": []}
+    except: return {"count": 0, "titles": []}
 
 def get_dcard_volume(keyword):
-    encoded_keyword = urllib.parse.quote(keyword)
-    url = f"https://www.dcard.tw/service/api/v2/search/posts?query={encoded_keyword}&forum=stock&limit=30"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        return len(requests.get(url, headers=headers, timeout=5).json())
-    except:
-        return 0
+    try: return len(requests.get(f"https://www.dcard.tw/service/api/v2/search/posts?query={urllib.parse.quote(keyword)}&forum=stock&limit=30", headers={"User-Agent": "Mozilla/5.0"}, timeout=5).json())
+    except: return 0
 
 def get_reddit_volume(keyword):
     if not reddit: return 0
-    try:
-        subreddits = reddit.subreddit("wallstreetbets+stocks+investing")
-        search_results = subreddits.search(keyword, sort='new', time_filter='day', limit=30)
-        return len(list(search_results))
-    except Exception as e:
-        return 0
+    try: return len(list(reddit.subreddit("wallstreetbets+stocks+investing").search(keyword, sort='new', time_filter='day', limit=30)))
+    except: return 0
 
 def check_upcoming_earnings(ticker_list):
     upcoming = []
     today = datetime.now(pytz.timezone('US/Eastern')).date()
     for tk in ticker_list:
         try:
-            stock = yf.Ticker(tk)
-            dates = stock.get_earnings_dates()
+            dates = yf.Ticker(tk).get_earnings_dates()
             if dates is not None and not dates.empty:
                 next_date = dates.index[0].date()
-                delta = (next_date - today).days
-                if 0 <= delta <= 7:
-                    upcoming.append(f"{tk} ({next_date.strftime('%m/%d')})")
-        except:
-            pass
+                if 0 <= (next_date - today).days <= 7: upcoming.append(f"{tk} ({next_date.strftime('%m/%d')})")
+        except: pass
     return upcoming
 
 # ==========================================
-# 5. 抓取數據 (38檔名單) 與暴力 K 線萃取
+# 4. 抓取數據 (38檔名單) 與暴力 K 線過濾
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -170,14 +153,13 @@ stock_pool = [
 tw_tz = pytz.timezone('Asia/Taipei')
 today_str = datetime.now(tw_tz).strftime('%Y-%m-%d')
 current_time = datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')
-
 exchange_rates = {"US": 1.0, "TW": 1/32.0, "JP": 1/150.0, "KR": 1/1350.0}
 
 today_results = []
 new_rows_for_db = []
 hottest_stock = {"name": "", "hype": 0, "titles": []}
 us_tickers_for_earnings = []
-stock_real_price_history = {} # 🌟 暴力 K 線儲存庫
+stock_real_price_history = {}
 
 for info in stock_pool:
     ticker, name, market, kw = info["ticker"], info["name"], info["market"], info["keywords"][0]
@@ -190,25 +172,21 @@ for info in stock_pool:
     
     try:
         stock = yf.Ticker(ticker)
-        # 暴力抓 10 天，確保扣掉假日後還有 6 個交易日可以算 5 天的單日漲跌幅
-        hist = stock.history(period="10d")
+        # 抓取較長天數，並強制去除空值，保證資料絕對連續
+        hist = stock.history(period="1mo") 
         if not hist.empty and 'Close' in hist.columns:
-            # 強制剔除 NaN，只拿真實有交易的收盤價和成交量
-            closes = hist['Close'].dropna().tolist()
-            vols = hist['Volume'].dropna().tolist()
-            
-            if len(closes) > 0:
-                # 只拿真正有交易的最後一天來算當前價格和成交額
+            df_valid = hist.dropna(subset=['Close', 'Volume'])
+            if not df_valid.empty:
+                closes = df_valid['Close'].tolist()
+                vols = df_valid['Volume'].tolist()
+                
                 current_price = float(closes[-1])
-                current_vol = float(vols[-1]) if len(vols) > 0 else 0.0
+                current_vol = float(vols[-1])
                 trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
                 
-                # 計算過去 5 次的真實單日漲跌幅
                 if len(closes) >= 2:
                     pcts = [((closes[i] - closes[i-1]) / closes[i-1]) * 100 for i in range(1, len(closes))]
-                    # 確保矩陣圖表（Page 2）絕對是填滿的
                     last_5 = pcts[-5:]
-                    # 不滿 5 天的前面補 0
                     while len(last_5) < 5: last_5.insert(0, 0.0)
                     stock_real_price_history[ticker] = last_5
                     
@@ -222,12 +200,9 @@ for info in stock_pool:
     combined_titles = yf_titles + news_info["titles"]
     combined_count = yf_count + news_info["count"]
     
-    if market == "TW":
-        forum_count = get_dcard_volume(kw)
-    elif market == "US":
-        forum_count = get_reddit_volume(kw)
-    else:
-        forum_count = 0 
+    if market == "TW": forum_count = get_dcard_volume(kw)
+    elif market == "US": forum_count = get_reddit_volume(kw)
+    else: forum_count = 0 
 
     total_hype = max(forum_count + combined_count, 1)
     
@@ -235,9 +210,7 @@ for info in stock_pool:
         hottest_stock = {"name": name, "hype": total_hype, "titles": combined_titles[:5]}
 
     new_rows_for_db.append([today_str, ticker, name, market, current_price, trading_value_m, total_hype])
-
-    money_mom, hype_mom = 0, 0
-    insight, emoji, short_insight = "🆕 首次建檔", "⚪", "首次"
+    insight = "🆕 首次建檔"
 
     if not df_history.empty:
         df_history['日期_格式化'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
@@ -252,204 +225,152 @@ for info in stock_pool:
                 past_val, past_hype = 0.0, 1.0
                 
             past_hype = max(past_hype, 1)
-            
-            if past_val > 0: money_mom = ((trading_value_m - past_val) / past_val) * 100
+            money_mom = ((trading_value_m - past_val) / past_val) * 100 if past_val > 0 else 0
             hype_mom = ((total_hype - past_hype) / past_hype) * 100
 
-            if money_mom > 0 and hype_mom > 0:
-                insight, emoji, short_insight = "🔥 右上：價量齊揚", "🔥", "齊揚"
-            elif money_mom > 0 and hype_mom <= 0:
-                insight, emoji, short_insight = "🤫 右下：低調吸金", "🤫", "低調"
-            elif money_mom <= 0 and hype_mom > 0:
-                insight, emoji, short_insight = "⚠️ 左上：聲量背離", "⚠️", "背離"
-            else:
-                insight, emoji, short_insight = "❄️ 左下：冷門打底", "❄️", "打底"
+            if money_mom > 0 and hype_mom > 0: insight = "🔥 右上：價量齊揚"
+            elif money_mom > 0 and hype_mom <= 0: insight = "🤫 右下：低調吸金"
+            elif money_mom <= 0 and hype_mom > 0: insight = "⚠️ 左上：聲量背離"
+            else: insight = "❄️ 左下：冷門打底"
+
+    today_pct = 0.0
+    if ticker in stock_real_price_history and len(stock_real_price_history[ticker]) > 0:
+        today_pct = stock_real_price_history[ticker][-1]
 
     today_results.append({
-        "圖表標籤": f"{name}({emoji}{short_insight})", 
+        "代號": ticker, 
         "名稱": name,
-        "當前總聲量": total_hype, 
+        "當前總聲量": total_hype,
+        "今日漲跌幅": today_pct,
         "象限洞察": insight
     })
 
 worksheet.append_rows(new_rows_for_db)
-
 earnings_alerts = check_upcoming_earnings(us_tickers_for_earnings)
-earnings_msg = f"📅 7日內財報預警：{', '.join(earnings_alerts)}" if earnings_alerts else "📅 7日內無重點美股財報。"
+earnings_msg = f"📅 財報預警：{', '.join(earnings_alerts)}" if earnings_alerts else "📅 財報預警：7日內無重點美股財報。"
 
 ai_insight_msg = "🤖 AI 分析：今日市場資訊量不足，無特別情緒波動。"
 if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"]) > 0:
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         titles_text = "\n".join(hottest_stock["titles"])
-        prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞標題(含來源出處)，給出一段50字以內的極簡『市場情緒快評』，並標示整體情緒為(偏多/偏空/中立/震盪)：\n{titles_text}"
-        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
+        prompt = f"你是華爾街證券分析師。請根據以下新聞，給出一段50字內極簡『市場情緒快評』，並標示整體情緒為(偏多/偏空/中立/震盪)：\n{titles_text}"
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
         ai_insight_msg = f"🤖 AI 晨間快評【焦點：{hottest_stock['name']}】\n{response.text.strip()}"
-    except Exception as e:
-        pass
+    except: pass
 
 # ==========================================
-# 6. 繪製 Page 1: 蜂巢板塊熱點圖 (完美金色流體曲線)
+# 5. 繪製 Page 1: 純淨 Matplotlib 蜂巢版 (保證字體不爆炸)
 # ==========================================
-print("正在繪製 Page 1 (地心引力蜂巢排列)...")
+print("正在繪製 Page 1 (Matplotlib)...")
 df_plot = pd.DataFrame(today_results)
-df_plot = df_plot.sort_values(by=['當前總聲量', '象限洞察'], ascending=[False, True]).reset_index(drop=True)
+df_plot = df_plot.sort_values(by='當前總聲量', ascending=False).reset_index(drop=True)
 
-# 定義 5-6-7-8-7-5 的蜂巢陣列坐標，共 38 點
 pattern = [5, 6, 7, 8, 7, 5] 
 x_coords, y_coords = [], []
 for row_idx, count in enumerate(pattern):
-    # 計算該行泡泡的 x 軸起始偏移，使其置中
     x_offset = - (count * 3.0) / 2.0
     for i in range(count):
-        # 3.0 是泡泡間距，2.6 是行間距，交錯排列產生蜂巢感
-        x = x_offset + i * 3.0 + 1.5
-        y = - row_idx * 2.6
-        x_coords.append(x)
-        y_coords.append(y)
+        x_coords.append(x_offset + i * 3.0 + 1.5)
+        y_coords.append(- row_idx * 2.6)
 
-# 幾何引力算法：計算所有點到「幾何中心點 (0, -6.5)」的距離
 coords = [{"x": x, "y": y, "dist": (x - 0)**2 + (y + 6.5)**2} for x, y in zip(x_coords, y_coords)]
-# 將坐標按距離從小到大排序，越聲量大的泡泡將分配到最中心的坐標
 coords = sorted(coords, key=lambda k: k["dist"])
 
-limit = min(len(df_plot), 38)
-df_plot = df_plot.iloc[:limit]
-df_plot['X坐標'] = [c["x"] for c in coords[:limit]]
-df_plot['Y坐標'] = [c["y"] for c in coords[:limit]]
+fig1, ax1 = plt.subplots(figsize=(12, 12), facecolor='#1e1e1e')
+ax1.set_facecolor('#1e1e1e')
 
-df_top10 = df_plot.iloc[:10]
-top10_points = np.array([df_top10['X坐標'].values, df_top10['Y坐標'].values])
-
-def get_bubble_color(insight):
-    cmap = {"🔥 右上：價量齊揚": "#ff4d4d", "🤫 右下：低調吸金": "#00cc96",
-            "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA", "🆕 首次建檔": "#808080"}
-    return cmap.get(insight, "#808080")
-
-markers, traces_list = [], []
-for i, row in df_plot.iterrows():
-    color = get_bubble_color(row['象限洞察'])
-    traces_list.append(go.Scatter(
-        x=[row['X坐標']], y=[row['Y坐標']], mode='markers+text',
-        marker=dict(size=48, color='#2C2C2C', line=dict(width=3, color=color)),
-        text=row['圖表標籤'], textposition='middle center', textfont=dict(size=13, color='white'), hoverinfo='none'
-    ))
-
-fig1 = go.Figure(data=traces_list)
-
-# 🌟 利用 scipy 繪製平滑的有機「金色流體外框」
-pts = np.array([
-    [0.0, -2.5], [3.5, -3.0], [4.8, -6.5], [3.5, -9.8], [1.5, -10.5], 
-    [0.0, -10.2], [-2.5, -10.0], [-4.5, -8.0], [-4.8, -5.0], [-3.0, -3.0], [0.0, -2.5]
-])
-# 使用Spline插值生成平滑曲線
+# 繪製有機黃金流體結界
+pts = np.array([[0.0, -2.5], [3.5, -3.0], [4.8, -6.5], [3.5, -9.8], [1.5, -10.5], 
+                [0.0, -10.2], [-2.5, -10.0], [-4.5, -8.0], [-4.8, -5.0], [-3.0, -3.0], [0.0, -2.5]])
 tck, u = splprep([pts[:,0], pts[:,1]], s=0, per=True)
-unew = np.linspace(0, 1, 200)
-out = splev(unew, tck)
+out = splev(np.linspace(0, 1, 500), tck)
+ax1.plot(out[0], out[1], color='#FFD700', linewidth=5, zorder=1)
 
-# 構造 SVG Path 格式
-path = f"M {out[0][0]},{out[1][0]}"
-for px, py in zip(out[0][1:], out[1][1:]):
-    path += f" L {px},{py}"
-path += " Z" # 封閉曲線
+# 繪製泡泡與文字
+for i, row in df_plot.iloc[:38].iterrows():
+    x, y = coords[i]['x'], coords[i]['y']
+    pct = row['今日漲跌幅']
+    rank = i + 1
+    
+    r = 1.45 if rank <= 10 else 1.2
+    lw = 4 if rank <= 10 else 2.5
+    color = '#ff4d4d' if pct > 0 else ('#00cc96' if pct < 0 else '#888888')
+    
+    # 泡泡本體
+    circle = plt.Circle((x, y), radius=r, facecolor='#2C2C2C', edgecolor=color, linewidth=lw, zorder=2)
+    ax1.add_patch(circle)
+    
+    # 內文 (加入價格漲跌顯示)
+    pct_str = f"+{pct:.1f}%" if pct > 0 else f"{pct:.1f}%"
+    txt = f"{row['名稱']}\n{row['代號']}\n{pct_str}"
+    
+    text_color = 'white' if rank <= 10 else '#C0C0C0'
+    fs = 11 if rank <= 10 else 9
+    
+    ax1.text(x, y, txt, color=text_color, ha='center', va='center', 
+             fontsize=fs, fontproperties=font_prop, fontweight='bold', zorder=3)
 
-# 將金色框線加入圖層底層
-fig1.add_shape(type="path", path=path, line=dict(color="#FFD700", width=4), layer="below")
+ax1.set_xlim(-14, 14)
+ax1.set_ylim(-16.5, 2.5)
+ax1.axis('off')
 
-fig1.update_xaxes(visible=False, range=[-12, 12]) 
-fig1.update_yaxes(visible=False, range=[-15.5, 1.5]) 
-fig1.update_layout(
-    title=f"【Page 1】全市場聲量熱點蜂巢圖<br>更新時間: {current_time}",
-    width=1200, height=1000, margin=dict(t=100, b=120, l=40, r=40),
-    template="plotly_dark", showlegend=False, font=dict(family="Noto Sans TC")
-)
+# 標題與註解
+ax1.text(0, 1.5, f"【Page 1】全市場聲量熱點蜂巢圖\n更新時間: {current_time}", 
+         fontproperties=font_prop, color='white', fontsize=16, ha='center', fontweight='bold')
+ax1.text(-8, -14.5, "🔴 紅色外框：收盤上漲", fontproperties=font_prop, color='#ff4d4d', fontsize=13, ha='center', fontweight='bold')
+ax1.text(0, -14.5, "🟢 綠色外框：收盤下跌", fontproperties=font_prop, color='#00cc96', fontsize=13, ha='center', fontweight='bold')
+ax1.text(8, -14.5, "⚪ 灰色外框：平盤無變化", fontproperties=font_prop, color='#888888', fontsize=13, ha='center', fontweight='bold')
+ax1.text(0, -15.8, "🔆 不規則金色框線：代表前十名最熱門聲量集中區 (聲量越大越集中中央與上方)", 
+         fontproperties=font_prop, color='#FFD700', fontsize=13, ha='center', fontweight='bold')
 
-# 底部圖例說明
-list_items = [
-    {"label": "👑 地心引力 (中/上) 指標：全市場聲量最高 TOP 10 (由金色流體曲線框住)", "color": "#FFD700"},
-    {"label": "🔴 泡泡邊框顏色：代表動能狀態", "color": "white"}
-]
-cmap = {"🔥 右上：價量齊揚": "#ff4d4d", "🤫 右下：低調吸金": "#00cc96", "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA"}
-
-for i, (k, v) in enumerate(cmap.items()):
-    fig1.add_annotation(
-        text=f"<b><span style='color:{v}'>🔴</span></b> {k}", xref="paper", yref="paper", 
-        x=0.03 + (i*0.24), y=-0.12, showarrow=False, font=dict(size=14, color="#A0A0A0"), 
-        xanchor="left", yanchor="top", align="left"
-    )
-
-img_path_1 = "radar_page1.jpg"
-# 🌟 設置不同的 scale 防止 kaleido 在 Action 裡解析度爆炸
-fig1.write_image(img_path_1, scale=1.5)
+plt.tight_layout()
+plt.savefig("radar_page1.jpg", facecolor='#1e1e1e', dpi=150, bbox_inches='tight')
 
 # ==========================================
-# 7. 繪製 Page 2: 暴力 K 線漲跌幅矩陣
+# 6. 繪製 Page 2: 乾淨 Plotly K 線矩陣 (無 HTML 版)
 # ==========================================
-print("正在計算五日歷史軌跡與滾動漲跌幅...")
+print("正在計算五日歷史軌跡...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
 df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
-
 df_all['日期_格式化'] = pd.to_datetime(df_all['日期']).dt.strftime('%Y-%m-%d')
 df_all['成交金額_百萬美元'] = pd.to_numeric(df_all['成交金額_百萬美元'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 df_all['總聲量'] = pd.to_numeric(df_all['總聲量'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 df_all = df_all.drop_duplicates(subset=['代號', '日期_格式化'], keep='last')
 df_all = df_all.sort_values(by=['代號', '日期_格式化'])
 
-table_data = []      
-table_colors = []    
+table_data, table_colors = [], []
 
 for info in stock_pool:
-    tk = info["ticker"]
-    name = info["name"]
+    tk, name = info["ticker"], info["name"]
     df_sub = df_all[df_all['代號'] == tk].tail(6)
     
-    # 🌟 用 Noto Sans 修復文字
-    row_texts = [f"<span style='font-family:Noto Sans TC'>{name}</span>", "⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
-    row_colors = ["#ffffff"] * 6 
+    row_texts = [name, "⚪ 0.0%", "⚪ 0.0%", "⚪ 0.0%", "⚪ 0.0%", "⚪ 0.0%"]
+    row_colors = ["white"] * 6 
     
     qs = ["⚪"] * 5
     if len(df_sub) >= 2:
-        vals = df_sub['成交金額_百萬美元'].values
-        hypes = df_sub['總聲量'].values
+        vals, hypes = df_sub['成交金額_百萬美元'].values, df_sub['總聲量'].values
         for i in range(1, len(df_sub)):
             money_mom = ((vals[i] - vals[i-1]) / vals[i-1] * 100) if vals[i-1] > 0 else 0
             hype_mom = ((hypes[i] - hypes[i-1]) / hypes[i-1] * 100) if hypes[i-1] > 0 else 0
             
-            q = "⚪"
             if money_mom > 0 and hype_mom > 0: q = "🔥"
             elif money_mom > 0 and hype_mom <= 0: q = "🤫"
             elif money_mom <= 0 and hype_mom > 0: q = "⚠️"
             else: q = "❄️"
             
-            target_idx = 5 - (len(df_sub) - i)
-            if 0 <= target_idx < 5:
-                qs[target_idx] = q
+            if 0 <= (5 - (len(df_sub) - i)) < 5: qs[5 - (len(df_sub) - i)] = q
 
-    # 🌟 取得 YFinance 最精準的 5 日真實漲跌幅
     recent_pcts = stock_real_price_history.get(tk, [0.0] * 5)
 
     for idx in range(5):
-        q = qs[idx]
-        pct = recent_pcts[idx]
+        q, pct = qs[idx], recent_pcts[idx]
         
-        # 🌟 確保所有欄位絕對都有資料，不會是空的
-        p_str = "-"
-        cell_color = "#ffffff"  # 預設白色，針對 0.0% 或沒波動
-        
-        if pct > 0:
-            p_str = f"+{pct:.1f}%"
-            cell_color = "#ff4d4d"
-        elif pct < 0:
-            p_str = f"{pct:.1f}%"
-            cell_color = "#00cc96"
-        elif pct == 0.0 and q != "⚪":
-            p_str = "0.0%"
-            cell_color = "#888888"
+        if pct > 0: p_str, cell_color = f"+{pct:.1f}%", "#ff4d4d"
+        elif pct < 0: p_str, cell_color = f"{pct:.1f}%", "#00cc96"
+        else: p_str, cell_color = "0.0%", "#888888"
             
         row_texts[idx+1] = f"{q} {p_str}"  
         row_colors[idx+1] = cell_color     
@@ -460,57 +381,50 @@ for info in stock_pool:
 col_data = list(zip(*table_data))
 col_colors = list(zip(*table_colors))
 
-headers = ['<b>標的名稱</b>', '<b>T-4</b>', '<b>T-3</b>', '<b>T-2</b>', '<b>T-1</b>', '<b>Today</b>']
+headers = ['標的名稱', 'T-4', 'T-3', 'T-2', 'T-1', 'Today']
 fig2 = go.Figure(data=[go.Table(
     columnwidth=[100, 100, 100, 100, 100, 100],
-    header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=14), align='center', height=40),
-    cells=dict(values=col_data, fill_color='#1e1e1e', font=dict(color=col_colors, size=15), align='center', height=45)
+    header=dict(values=headers, fill_color='#2c2c2c', font=dict(color='white', size=15), align='center', height=40),
+    cells=dict(values=col_data, fill_color='#1e1e1e', font=dict(color=col_colors, size=14), align='center', height=40)
 )])
 
-dynamic_height = 150 + len(stock_pool) * 45
-fig2.update_layout(title="【Page 2】五日動能與真實漲跌幅矩陣", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height, font=dict(family="Noto Sans TC"))
-
-img_path_2 = "trend_page2.jpg"
-fig2.write_image(img_path_2, scale=1.5)
+fig2.update_layout(
+    title="【Page 2】五日動能與真實漲跌幅矩陣", 
+    template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), 
+    height=150 + len(stock_pool) * 40, 
+    font=dict(family="Noto Sans TC, sans-serif")
+)
+fig2.write_image("trend_page2.jpg", scale=2)
 
 # ==========================================
-# 8. 上傳圖床並發送 LINE 訊息
+# 7. 上傳圖床並發送 LINE 訊息
 # ==========================================
 def upload_image(file_path):
     try:
         res = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"}, files={"fileToUpload": open(file_path, "rb")}, timeout=15)
         if res.status_code == 200: return res.text
-    except:
-        pass
-    
-    # 免費圖床備案 freeimage.host
+    except: pass
     try:
         import base64
-        with open(file_path, "rb") as f:
-            img_data = base64.b64encode(f.read()).decode('utf-8')
+        with open(file_path, "rb") as f: img_data = base64.b64encode(f.read()).decode('utf-8')
         res = requests.post("https://freeimage.host/api/1/upload", data={"key": "6d207e02198a847aa98d0a2a901485a5", "action": "upload", "source": img_data, "format": "json"}, timeout=15)
         if res.status_code == 200: return res.json()['image']['url']
-    except:
-        return None
+    except: return None
 
-print("正在上傳 Page 1...")
-img_url_1 = upload_image(img_path_1)
-print("正在上傳 Page 2...")
-img_url_2 = upload_image(img_path_2)
+print("正在上傳圖片...")
+img_url_1 = upload_image("radar_page1.jpg")
+img_url_2 = upload_image("trend_page2.jpg")
 
 if img_url_1 or img_url_2:
-    print("準備發送終極戰情 LINE...")
     smart_money = [row['名稱'] for row in today_results if "🤫 右下：低調吸金" in row['象限洞察']]
     money_msg = f"🤫 特別吸金：{', '.join(smart_money)}" if smart_money else "🤫 特別吸金：無特別低調吸金標的"
     
-    final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}\n\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
+    final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}\n\n🕒 資料產出時間：{current_time}\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
     
     messages = [{"type": "text", "text": final_text}]
     if img_url_1: messages.append({"type": "image", "originalContentUrl": img_url_1, "previewImageUrl": img_url_1})
     if img_url_2: messages.append({"type": "image", "originalContentUrl": img_url_2, "previewImageUrl": img_url_2})
     
-    payload = {"to": LINE_USER_ID, "messages": messages}
-    requests.post("https://api.line.me/v2/bot/message/push", headers={"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, json=payload, timeout=10)
+    requests.post("https://api.line.me/v2/bot/message/push", headers={"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, json={"to": LINE_USER_ID, "messages": messages}, timeout=10)
     print("✅ LINE 雙圖表訊息發送完畢！")
-else:
-    print("❌ 圖片上傳失敗，無法發送 LINE。")
+else: print("❌ 圖片上傳失敗，無法發送 LINE。")
