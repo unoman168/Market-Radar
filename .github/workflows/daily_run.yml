@@ -2,8 +2,8 @@ name: 晨會戰情機器人自動排程
 
 on:
   schedule:
-    - cron: '15 23 * * *'
-  workflow_dispatch: 
+    - cron: '30 23 * * *' # 台灣時間每天早上 07:30 執行
+  workflow_dispatch:
 
 jobs:
   run-report:
