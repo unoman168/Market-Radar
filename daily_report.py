@@ -92,7 +92,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據與暴力 K 線過濾 
+# 4. 抓取數據與暴力 K 線過濾 (修復藥華藥無價格問題)
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -164,12 +164,15 @@ for info in stock_pool:
         stock = yf.Ticker(yf_ticker)
         hist = stock.history(period="15d") 
         if not hist.empty and 'Close' in hist.columns:
-            df_valid = hist.dropna(subset=['Close', 'Volume'])
-            if not df_valid.empty:
-                closes = df_valid['Close'].tolist()
-                vols = df_valid['Volume'].tolist()
-                
+            # 🌟 只過濾掉收盤價為 NaN 的天數，包容成交量遺失 (YFinance 台股常見 Bug)
+            df_close = hist.dropna(subset=['Close'])
+            
+            if not df_close.empty:
+                closes = df_close['Close'].tolist()
                 current_price = float(closes[-1])
+                
+                # 安全獲取成交量
+                vols = df_close['Volume'].fillna(0).tolist() if 'Volume' in df_close.columns else [0]*len(closes)
                 current_vol = float(vols[-1])
                 trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
                 
@@ -283,7 +286,7 @@ for i, row in df_plot.iterrows():
     pct = row['今日漲跌幅']
     line_colors.append('#ff4d4d' if pct > 0 else ('#00cc96' if pct < 0 else '#888888'))
     
-    # 🌟 絕對純淨文字 (沒有 HTML)，加入漲跌幅顯示
+    # 加入漲跌幅顯示
     pct_str = f"+{pct:.1f}%" if pct > 0 else f"{pct:.1f}%"
     text_labels.append(f"{row['名稱']}<br>{row['代號']}<br>{pct_str}")
     
@@ -328,17 +331,18 @@ fig1.update_layout(
     template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 
-# 🌟 極簡純淨註解 (杜絕 HTML 亂碼，上下分行對齊)
-annotation_text = "🔆 不規則金色流體框線：代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)\n\n🔴 紅色外框：收盤上漲　　🟢 綠色外框：收盤下跌　　⚪ 灰色外框：平盤無變化"
-
+# 🌟 極簡雙行註解 (利用獨立的 Annotation 強制分行，保證不亂碼)
+# 第一行：金色流體說明
 fig1.add_annotation(
-    text=annotation_text, 
-    xref="paper", yref="paper", 
-    x=0.5, y=-0.1, 
-    showarrow=False, 
-    font=dict(size=17, color="#E0E0E0"), 
-    xanchor="center", yanchor="top",
-    align="center"
+    text="🔆 不規則金色流體框線：代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)", 
+    xref="paper", yref="paper", x=0.5, y=-0.08, 
+    showarrow=False, font=dict(size=16, color="#FFD700"), xanchor="center", yanchor="top"
+)
+# 第二行：紅綠邊框說明
+fig1.add_annotation(
+    text="🔴 紅色外框：收盤上漲　　🟢 綠色外框：收盤下跌　　⚪ 灰色外框：平盤無變化", 
+    xref="paper", yref="paper", x=0.5, y=-0.13, 
+    showarrow=False, font=dict(size=15, color="#E0E0E0"), xanchor="center", yanchor="top"
 )
 
 fig1.write_image("radar_page1.jpg", scale=2)
