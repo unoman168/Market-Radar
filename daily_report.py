@@ -15,8 +15,9 @@ from google.oauth2.service_account import Credentials
 import gspread
 from google import genai
 import praw
+from scipy.interpolate import splprep, splev
 
-print("啟動【跨國巨頭 38 檔：蜂巢式泡泡圖 & AI新聞來源版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：地心引力與黃金流體結界版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -54,7 +55,7 @@ except Exception as e:
 
 df_history = pd.DataFrame(worksheet.get_all_records())
 
-# 3. 爬蟲函數群 (🌟 升級：抓取新聞來源)
+# 3. 爬蟲函數群
 def get_news_data(keyword, limit=5):
     query = f'"{keyword}"'
     encoded_keyword = urllib.parse.quote(query)
@@ -187,7 +188,6 @@ for info in stock_pool:
                     stock_real_price_history[ticker] = last_5
                     
         yf_news = stock.news
-        # 🌟 升級：抓取 YFinance 新聞來源
         yf_titles = [f"《{n.get('publisher', 'Yahoo財經')}》{n['title']}" for n in yf_news[:5]] if yf_news else []
         yf_count = len(yf_news) if yf_news else 0
     except Exception as e:
@@ -211,8 +211,7 @@ for info in stock_pool:
 
     new_rows_for_db.append([today_str, ticker, name, market, current_price, trading_value_m, total_hype])
 
-    money_mom, hype_mom = 0, 0
-    insight, emoji, short_insight = "🆕 首次建檔", "⚪", "首次"
+    insight = "🆕 首次建檔"
 
     if not df_history.empty:
         df_history['日期_格式化'] = pd.to_datetime(df_history['日期']).dt.strftime('%Y-%m-%d')
@@ -227,23 +226,23 @@ for info in stock_pool:
                 past_val, past_hype = 0.0, 1.0
                 
             past_hype = max(past_hype, 1)
-            
-            if past_val > 0: money_mom = ((trading_value_m - past_val) / past_val) * 100
+            money_mom = ((trading_value_m - past_val) / past_val) * 100 if past_val > 0 else 0
             hype_mom = ((total_hype - past_hype) / past_hype) * 100
 
-            if money_mom > 0 and hype_mom > 0:
-                insight, emoji, short_insight = "🔥 右上：價量齊揚", "🔥", "齊揚"
-            elif money_mom > 0 and hype_mom <= 0:
-                insight, emoji, short_insight = "🤫 右下：低調吸金", "🤫", "低調"
-            elif money_mom <= 0 and hype_mom > 0:
-                insight, emoji, short_insight = "⚠️ 左上：聲量背離", "⚠️", "背離"
-            else:
-                insight, emoji, short_insight = "❄️ 左下：冷門打底", "❄️", "打底"
+            if money_mom > 0 and hype_mom > 0: insight = "🔥 右上：價量齊揚"
+            elif money_mom > 0 and hype_mom <= 0: insight = "🤫 右下：低調吸金"
+            elif money_mom <= 0 and hype_mom > 0: insight = "⚠️ 左上：聲量背離"
+            else: insight = "❄️ 左下：冷門打底"
+
+    today_pct = 0.0
+    if ticker in stock_real_price_history and len(stock_real_price_history[ticker]) > 0:
+        today_pct = stock_real_price_history[ticker][-1]
 
     today_results.append({
-        "圖表標籤": f"{name}({emoji}{short_insight})", 
+        "代號": ticker, 
         "名稱": name,
-        "當前總聲量": total_hype, 
+        "當前總聲量": total_hype,
+        "今日漲跌幅": today_pct,
         "象限洞察": insight
     })
 
@@ -257,7 +256,6 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         titles_text = "\n".join(hottest_stock["titles"])
-        # 🌟 升級：嚴格要求 Gemini 給出統一的小圖示隊形
         prompt = f"你是華爾街頂級證券分析師。請根據以下關於【{hottest_stock['name']}】的最新新聞(含來源出處)，給出一段50字以內的極簡『市場情緒快評』。\n\n必須嚴格遵守以下輸出格式：\n1. 第一段請直接給出點評內容 (可以點出新聞來源)。\n2. 換行後，最後一行務必獨立顯示：『🌟 整體情緒：(偏多/偏空/中立/震盪)』\n\n新聞資料：\n{titles_text}"
         
         response = client.models.generate_content(
@@ -269,58 +267,120 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
         pass
 
 # ==========================================
-# 5. 繪製 Page 1: 蜂巢式分散泡泡圖 (Honeycomb Grid)
+# 5. 繪製 Page 1: 全市場聲量熱點蜂巢圖 (地心引力 & 黃金流體框線)
 # ==========================================
 df_plot = pd.DataFrame(today_results)
-df_plot = df_plot.sort_values(by=['象限洞察', '當前總聲量'], ascending=[True, False])
+# 🌟 確保依照聲量最大排到最前面
+df_plot = df_plot.sort_values(by='當前總聲量', ascending=False).reset_index(drop=True)
 
-# 🌟 蜂巢陣列演算法：計算絕對不重疊的 X 坐標與 Y 坐標
-y_offsets = {}
-current_y = 0
-quadrants = ["🔥 右上：價量齊揚", "🤫 右下：低調吸金", "⚠️ 左上：聲量背離", "❄️ 左下：冷門打底", "🆕 首次建檔"]
+# 生成完美的 5-6-7-8-7-5 六邊形蜂巢陣列 (共38個點)
+pattern = [5, 6, 7, 8, 7, 5] 
+x_coords, y_coords = [], []
+for row_idx, count in enumerate(pattern):
+    x_offset = - (count * 3.0) / 2.0
+    for i in range(count):
+        x = x_offset + i * 3.0 + 1.5
+        y = - row_idx * 2.6
+        x_coords.append(x)
+        y_coords.append(y)
 
-for q in quadrants:
-    subset = df_plot[df_plot['象限洞察'] == q]
-    if not subset.empty:
-        y_offsets[q] = current_y
-        rows = (len(subset) - 1) // 6 + 1
-        current_y -= (rows * 2.5 + 4) # 每個群組保留充分間距
+# 幾何引力算法：計算點與幾何中心點的距離
+cx, cy = 0, -6.5
+coords = [{"x": x, "y": y, "dist": (x - cx)**2 + (y - cy)**2} for x, y in zip(x_coords, y_coords)]
+coords = sorted(coords, key=lambda k: k["dist"])
 
-def calculate_x(r):
-    return (r['col'] * 3.0) + (1.5 if r['row'] % 2 == 1 else 0) # 產生交錯的蜂巢感
+limit = min(len(df_plot), 38)
+df_plot = df_plot.iloc[:limit]
 
-def calculate_y(r):
-    return y_offsets.get(r['象限洞察'], 0) - (r['row'] * 2.5)
+df_plot['X坐標'] = [c["x"] for c in coords[:limit]]
+df_plot['Y坐標'] = [c["y"] for c in coords[:limit]]
 
-df_plot['col'] = df_plot.groupby('象限洞察').cumcount() % 6
-df_plot['row'] = df_plot.groupby('象限洞察').cumcount() // 6
-df_plot['X坐標'] = df_plot.apply(calculate_x, axis=1)
-df_plot['Y坐標'] = df_plot.apply(calculate_y, axis=1)
+# 分配繪圖屬性
+sizes = []
+line_widths = []
+line_colors = []
+text_labels = []
 
-fig1 = px.scatter(
-    df_plot, x="X坐標", y="Y坐標", size="當前總聲量", color="象限洞察",
-    text="圖表標籤", title=f"【Page 1】全市場動能板塊熱點圖<br>更新時間: {current_time}",
-    size_max=50, template="plotly_dark",
-    color_discrete_map={"🔥 右上：價量齊揚": "#EF553B", "🤫 右下：低調吸金": "#00CC96",
-                        "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA", "🆕 首次建檔": "#808080"}
+for i, row in df_plot.iterrows():
+    rank = i + 1
+    # 決定泡泡大小與粗細 (Top 10 略大)
+    if rank <= 3: 
+        sizes.append(65); line_widths.append(6)
+    elif rank <= 10: 
+        sizes.append(58); line_widths.append(5)
+    else: 
+        sizes.append(48); line_widths.append(3)
+    
+    # 決定漲跌顏色
+    pct = row['今日漲跌幅']
+    if pct > 0: line_colors.append('#ff4d4d')
+    elif pct < 0: line_colors.append('#00cc96')
+    else: line_colors.append('#888888')
+    
+    # 決定文字格式 (最乾淨的 中文+代號)
+    if rank <= 10:
+        text_labels.append(f"<b>{row['名稱']}</b><br><b>{row['代號']}</b>")
+    else:
+        # 其他名次稍微調暗文字顏色
+        text_labels.append(f"<b><span style='color:#C0C0C0'>{row['名稱']}</span></b><br><span style='color:#C0C0C0'>{row['代號']}</span>")
+
+df_plot['MarkerSize'] = sizes
+df_plot['LineWidth'] = line_widths
+df_plot['LineColor'] = line_colors
+df_plot['圖表標籤'] = text_labels
+
+fig1 = go.Figure()
+
+# 🌟 魔法：利用 scipy 繪製平滑的有機「不規則黃金流體外框」
+pts = np.array([
+    [0.0, -2.5], [3.5, -3.0], [4.8, -6.5], [3.5, -9.8], [1.5, -10.5], 
+    [0.0, -10.2], [-2.5, -10.0], [-4.5, -8.0], [-4.8, -5.0], [-3.0, -3.0], [0.0, -2.5]
+])
+tck, u = splprep([pts[:,0], pts[:,1]], s=0, per=True)
+unew = np.linspace(0, 1, 200)
+out = splev(unew, tck)
+
+path = f"M {out[0][0]},{out[1][0]}"
+for px_val, py_val in zip(out[0][1:], out[1][1:]):
+    path += f" L {px_val},{py_val}"
+path += " Z"
+
+# 將黃金框線加入圖層底層
+fig1.add_shape(type="path", path=path, line=dict(color="#FFD700", width=5), layer="below")
+
+# 加入所有股票泡泡
+# 將前 10 名與後 28 名分開加入，以保證字體大小的精準控制
+df_top10 = df_plot.iloc[:10]
+df_rest = df_plot.iloc[10:]
+
+fig1.add_trace(go.Scatter(
+    x=df_rest['X坐標'], y=df_rest['Y坐標'], mode='markers+text',
+    marker=dict(size=df_rest['MarkerSize'], color='#2C2C2C', line=dict(width=df_rest['LineWidth'], color=df_rest['LineColor'])),
+    text=df_rest['圖表標籤'], textposition='middle center', textfont=dict(size=11, color='white'), hoverinfo='none'
+))
+
+fig1.add_trace(go.Scatter(
+    x=df_top10['X坐標'], y=df_top10['Y坐標'], mode='markers+text',
+    marker=dict(size=df_top10['MarkerSize'], color='#2C2C2C', line=dict(width=df_top10['LineWidth'], color=df_top10['LineColor'])),
+    text=df_top10['圖表標籤'], textposition='middle center', textfont=dict(size=14, color='white'), hoverinfo='none'
+))
+
+fig1.update_xaxes(visible=False, range=[-14, 14]) 
+fig1.update_yaxes(visible=False, range=[-15.5, 1.5]) 
+
+# 設定排版與底部註釋
+fig1.update_layout(
+    title=f"【Page 1】全市場聲量熱點蜂巢圖<br>更新時間: {current_time}",
+    width=1200, height=1100, margin=dict(t=100, b=150, l=40, r=40),
+    template="plotly_dark", showlegend=False
 )
 
-# 替每個板塊加上漂亮的大標題
-for q in quadrants:
-    if q in y_offsets:
-        fig1.add_annotation(
-            x=-1, y=y_offsets[q] + 1.8,
-            text=f"<b>{q}</b>",
-            showarrow=False,
-            font=dict(size=18, color="white"),
-            xanchor="left", yanchor="bottom"
-        )
-
-fig1.update_traces(textposition='bottom center', textfont_size=13, cliponaxis=False)
-fig1.update_xaxes(visible=False, range=[-1.5, 18]) 
-fig1.update_yaxes(visible=False, range=[current_y, 4]) 
-
-fig1.update_layout(width=1200, height=1100, margin=dict(t=120, b=40, l=40, r=40), showlegend=False)
+fig1.add_annotation(
+    text="🔴 <b>紅色外框：</b>收盤上漲　　🟢 <b>綠色外框：</b>收盤下跌　　⚪ <b>灰色外框：</b>平盤無變化<br><br>🔆 <b>不規則金色框線：</b>代表前十名最熱門聲量集中區 (聲量越大越集中中央與上方)", 
+    xref="paper", yref="paper", 
+    x=0.5, y=-0.1, showarrow=False, font=dict(size=17, color="#E0E0E0"), 
+    xanchor="center", yanchor="top", align="center"
+)
 
 img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
@@ -435,12 +495,9 @@ img_url_2 = upload_image(img_path_2)
 
 if img_url_1 or img_url_2:
     print("準備發送終極戰情 LINE...")
-    smart_money = [row['名稱'] for row in today_results if "低調吸金" in row['象限洞察']]
-    
-    # 🌟 升級：對齊所有文字區塊的開頭圖示
+    smart_money = [row['名稱'] for row in today_results if "🤫 右下：低調吸金" in row['象限洞察']]
     money_msg = f"🤫 特別吸金：{', '.join(smart_money)}" if smart_money else "🤫 特別吸金：無特別低調吸金標的"
     
-    # 🌟 升級：置入資料時間，並將標籤放至文末以便檢索
     final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}\n\n🕒 資料產出時間：{current_time}\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
     
     messages = [{"type": "text", "text": final_text}]
