@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pytz
 import requests
 import pandas as pd
-import numpy as np  # 🌟 新增數據運算套件，用來修補資料
+import numpy as np
 import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
@@ -16,7 +16,7 @@ import gspread
 from google import genai
 import praw
 
-print("啟動【跨國巨頭 38 檔：歷史資料自動修復版】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：板塊熱點圖 & 雙軌資料源版】法人戰情機器人...")
 
 # 1. 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -100,7 +100,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據 (38檔名單)
+# 4. 抓取數據與建立雙軌資料庫 (38檔名單)
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -154,6 +154,9 @@ new_rows_for_db = []
 hottest_stock = {"name": "", "hype": 0, "titles": []}
 us_tickers_for_earnings = []
 
+# 🌟 新增：獨立保存最乾淨的 YFinance 真實漲跌幅陣列
+stock_real_price_history = {}
+
 for info in stock_pool:
     ticker, name, market, kw = info["ticker"], info["name"], info["market"], info["keywords"][0]
     rate = exchange_rates.get(market, 1.0)
@@ -161,15 +164,27 @@ for info in stock_pool:
     
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="5d")
+        # 抓取近 10 日 K 線以確保有足夠的交易日計算漲跌幅
+        hist = stock.history(period="10d")
+        
         if not hist.empty:
             current_price = float(hist['Close'].iloc[-1])
             current_vol = float(hist['Volume'].iloc[-1])
             trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
+            
+            # 💡 核心解耦：直接在這裡計算過去 5 天的真實交易日漲跌幅，不再依賴 Google Sheets！
+            if len(hist) >= 2:
+                closes = hist['Close'].values
+                pcts = np.diff(closes) / closes[:-1] * 100
+                last_5_pcts = list(pcts[-5:])
+                # 如果新上市資料不足 5 天，用 0.0 補齊前方
+                while len(last_5_pcts) < 5: last_5_pcts.insert(0, 0.0)
+                stock_real_price_history[ticker] = last_5_pcts
+            else:
+                stock_real_price_history[ticker] = [0.0] * 5
         else:
-            fast_info = stock.fast_info
-            current_price = float(fast_info.last_price)
-            trading_value_m = round((fast_info.last_volume * current_price * rate) / 1000000, 2)
+            current_price, trading_value_m = 0.0, 0.0
+            stock_real_price_history[ticker] = [0.0] * 5
             
         yf_news = stock.news
         yf_titles = [n['title'] for n in yf_news[:5]] if yf_news else []
@@ -177,6 +192,7 @@ for info in stock_pool:
     except Exception as e:
         current_price, trading_value_m = 0.0, 0.0
         yf_titles, yf_count = [], 0
+        stock_real_price_history[ticker] = [0.0] * 5
 
     news_info = get_news_data(kw)
     combined_titles = yf_titles + news_info["titles"]
@@ -248,7 +264,7 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
         pass
 
 # ==========================================
-# 5. 繪製 Page 1: 動能雷達圖
+# 5. 繪製 Page 1: 板塊熱點圖 (Treemap)
 # ==========================================
 df_plot = pd.DataFrame(today_results)
 q_lists = {"🔥 右上：價量齊揚": [], "🤫 右下：低調吸金": [], "⚠️ 左上：聲量背離": [], "❄️ 左下：冷門打底": [], "🆕 首次建檔": []}
@@ -265,29 +281,33 @@ if q_lists["⚠️ 左上：聲量背離"]: list_text += f"⚠️ 聲量背離�
 if q_lists["❄️ 左下：冷門打底"]: list_text += f"❄️ 冷門打底：{wrap_list(q_lists['❄️ 左下：冷門打底'])}<br>"
 if q_lists["🆕 首次建檔"]: list_text += f"🆕 首次建檔：{wrap_list(q_lists['🆕 首次建檔'])}"
 
-fig1 = px.scatter(
-    df_plot, x="資金動能變化 (%)", y="聲量動能變化 (%)", size="當前總聲量", color="象限洞察",
-    text="圖表標籤", title=f"【Page 1】動能四象限與AI情緒解析<br>更新時間: {current_time}",
-    size_max=60, template="plotly_dark",
-    color_discrete_map={"🔥 右上：價量齊揚": "#EF553B", "🤫 右下：低調吸金": "#00CC96",
-                        "⚠️ 左上：聲量背離": "#AB63FA", "❄️ 左下：冷門打底": "#636EFA", "🆕 首次建檔": "#808080"}
+# 🌟 重構為板塊熱點圖 (Treemap)，面積=總聲量，顏色=象限洞察
+fig1 = px.treemap(
+    df_plot,
+    path=[px.Constant("全市場動能板塊"), '象限洞察', '名稱'],
+    values='當前總聲量',
+    color='象限洞察',
+    color_discrete_map={
+        "🔥 右上：價量齊揚": "#EF553B", 
+        "🤫 右下：低調吸金": "#00CC96", 
+        "⚠️ 左上：聲量背離": "#AB63FA", 
+        "❄️ 左下：冷門打底": "#636EFA", 
+        "🆕 首次建檔": "#808080"
+    },
+    title=f"【Page 1】全市場聲量板塊熱點圖<br>更新時間: {current_time}",
+    template="plotly_dark"
 )
-fig1.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.3)
-fig1.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.3)
-fig1.update_traces(textposition='top center', cliponaxis=False)
 
-x_min, x_max = df_plot["資金動能變化 (%)"].min(), df_plot["資金動能變化 (%)"].max()
-y_min, y_max = df_plot["聲量動能變化 (%)"].min(), df_plot["聲量動能變化 (%)"].max()
-if x_min == x_max: x_min, x_max = -10, 10
-if y_min == y_max: y_min, y_max = -10, 10
-x_pad = abs(x_max - x_min) * 0.2 + 5
-y_pad = abs(y_max - y_min) * 0.2 + 5
-fig1.update_xaxes(range=[x_min - x_pad, x_max + x_pad])
-fig1.update_yaxes(range=[y_min - y_pad, y_max + y_pad])
+# 設定 Treemap 文字格式
+fig1.update_traces(
+    textinfo="label+value",
+    texttemplate="<b>%{label}</b><br>聲量: %{value}",
+    hovertemplate="<b>%{label}</b><br>總聲量: %{value}<br>所屬板塊: %{parent}"
+)
 
-fig1.update_layout(width=1200, height=1050, margin=dict(t=120, b=400, l=80, r=150))
+fig1.update_layout(width=1200, height=1100, margin=dict(t=100, b=350, l=40, r=40))
 
-footer_text = "<b>【象限定義】</b> 🔥 右上：價量齊揚 ｜ 🤫 右下：低調吸金 ｜ ⚠️ 左上：聲量背離 ｜ ❄️ 左下：冷門打底" + list_text
+footer_text = "<b>【象限定義】</b> 🔥 價量齊揚(強勢噴出) ｜ 🤫 低調吸金(潛伏買點) ｜ ⚠️ 聲量背離(出場警示) ｜ ❄️ 冷門打底" + list_text
 fig1.add_annotation(
     text=footer_text, xref="paper", yref="paper", 
     x=0, y=-0.35, showarrow=False, font=dict(size=14, color="#A0A0A0"), 
@@ -298,7 +318,7 @@ img_path_1 = "radar_page1.jpg"
 fig1.write_image(img_path_1, scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 歷史記憶修復版
+# 6. 繪製 Page 2: 真實行情解耦矩陣版
 # ==========================================
 print("正在計算五日歷史軌跡與滾動漲跌幅...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
@@ -306,15 +326,9 @@ df_today = pd.DataFrame(new_rows_for_db, columns=columns)
 df_all = pd.concat([df_history, df_today], ignore_index=True)
 
 df_all['日期_格式化'] = pd.to_datetime(df_all['日期']).dt.strftime('%Y-%m-%d')
-df_all['收盤價'] = pd.to_numeric(df_all['收盤價'].astype(str).str.replace(',', ''), errors='coerce')
+# 我們只保留動能相關數據，股價已由上方 YFinance 直接計算
 df_all['成交金額_百萬美元'] = pd.to_numeric(df_all['成交金額_百萬美元'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 df_all['總聲量'] = pd.to_numeric(df_all['總聲量'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-
-# 🌟 歷史記憶修復術：自動填補過去因 Bug 導致的 0 元收盤價，將 0 替換為空值，並用前後日的真實價格自動補齊
-df_all['收盤價'] = df_all['收盤價'].replace(0.0, np.nan)
-df_all['收盤價'] = df_all.groupby('代號')['收盤價'].transform(lambda x: x.ffill().bfill())
-df_all['收盤價'] = df_all['收盤價'].fillna(0) # 最終保險
-
 df_all = df_all.drop_duplicates(subset=['代號', '日期_格式化'], keep='last')
 df_all = df_all.sort_values(by=['代號', '日期_格式化'])
 
@@ -329,11 +343,11 @@ for info in stock_pool:
     row_texts = [name, "⚪ -", "⚪ -", "⚪ -", "⚪ -", "⚪ -"]
     row_colors = ["#ffffff"] * 6 
     
+    # 步驟 1：從資料庫萃取「動能象限符號 (Emoji)」
+    qs = ["⚪"] * 5
     if len(df_sub) >= 2:
         vals = df_sub['成交金額_百萬美元'].values
         hypes = df_sub['總聲量'].values
-        prices = df_sub['收盤價'].values
-        
         for i in range(1, len(df_sub)):
             money_mom = ((vals[i] - vals[i-1]) / vals[i-1] * 100) if vals[i-1] > 0 else 0
             hype_mom = ((hypes[i] - hypes[i-1]) / hypes[i-1] * 100) if hypes[i-1] > 0 else 0
@@ -344,25 +358,34 @@ for info in stock_pool:
             elif money_mom <= 0 and hype_mom > 0: q = "⚠️"
             else: q = "❄️"
             
-            p_str = "-"
-            cell_color = "#ffffff"  
+            target_idx = 5 - (len(df_sub) - i)
+            if 0 <= target_idx < 5:
+                qs[target_idx] = q
+
+    # 步驟 2：從 YFinance 獨立矩陣取出「最真實的 5 日漲跌幅」
+    recent_pcts = stock_real_price_history.get(tk, [0.0] * 5)
+
+    # 步驟 3：完美拼裝 Emoji 與真實漲跌幅！
+    for idx in range(5):
+        q = qs[idx]
+        pct = recent_pcts[idx]
+        
+        p_str = "-"
+        cell_color = "#ffffff"  
+        
+        # 只要 YFinance 有抓到行情，就絕對會顯示顏色！
+        if pct > 0:
+            p_str = f"+{pct:.1f}%"
+            cell_color = "#ff4d4d"
+        elif pct < 0:
+            p_str = f"{pct:.1f}%"
+            cell_color = "#00cc96"
+        elif pct == 0.0 and q != "⚪":
+            p_str = "0.0%"
+            cell_color = "#888888"
             
-            if prices[i] > 0 and prices[i-1] > 0:
-                pct_change = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
-                if pct_change > 0:
-                    p_str = f"+{pct_change:.1f}%"
-                    cell_color = "#ff4d4d"
-                elif pct_change < 0:
-                    p_str = f"{pct_change:.1f}%"
-                    cell_color = "#00cc96"
-                else:
-                    p_str = "0.0%"
-                    cell_color = "#888888"
-            
-            target_idx = 6 - (len(df_sub) - i)
-            if 1 <= target_idx <= 5:
-                row_texts[target_idx] = f"{q} {p_str}"  
-                row_colors[target_idx] = cell_color     
+        row_texts[idx+1] = f"{q} {p_str}"  
+        row_colors[idx+1] = cell_color     
                 
     table_data.append(row_texts)
     table_colors.append(row_colors)
@@ -378,7 +401,7 @@ fig2 = go.Figure(data=[go.Table(
 )])
 
 dynamic_height = 150 + len(stock_pool) * 35
-fig2.update_layout(title="【Page 2】五日資金動能與並排漲跌幅軌跡表", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
+fig2.update_layout(title="【Page 2】五日動能與漲跌幅矩陣 (真實行情版)", template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), height=dynamic_height)
 
 img_path_2 = "trend_page2.jpg"
 fig2.write_image(img_path_2, scale=2)
