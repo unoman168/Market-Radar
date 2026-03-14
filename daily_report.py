@@ -1,9 +1,7 @@
 import os
-import sys
 import json
 import time
 import urllib.parse
-import urllib.request  # 確保下載模組正確載入
 from datetime import datetime, timedelta
 import pytz
 import requests
@@ -18,37 +16,18 @@ from google import genai
 import praw
 import platform
 import subprocess
-import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev
-import matplotlib.font_manager as fm
 
-print("啟動【跨國巨頭 38 檔：地心引力 & 黃金流體結界 (純淨穩定版)】法人戰情機器人...")
+print("啟動【跨國巨頭 38 檔：完美蜂巢 & 暴力K線防禦版】法人戰情機器人...")
 
 # ==========================================
-# 1. 系統級安裝中文字型 (修復 404 網址，絕對防禦亂碼)
+# 1. 系統級安裝中文字型 (防禦亂碼方塊)
 # ==========================================
-font_path_local = "NotoSansTC-Regular.ttf"
-if not os.path.exists(font_path_local):
-    print("正在下載 Noto Sans TC 中文字型...")
-    # 🌟 更新為 Google Fonts 最新的穩定存放庫網址
-    url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
-    try:
-        urllib.request.urlretrieve(url, font_path_local)
-        print("✅ 字型下載完成！")
-    except Exception as e:
-        print(f"❌ 字型下載失敗: {e}")
-
-if platform.system() == "Linux" and os.path.exists(font_path_local):
-    font_dir = os.path.expanduser("~/.fonts")
-    os.makedirs(font_dir, exist_ok=True)
-    sys_font_path = os.path.join(font_dir, "NotoSansTC-Regular.ttf")
-    if not os.path.exists(sys_font_path):
-        import shutil
-        shutil.copy(font_path_local, sys_font_path)
-        subprocess.run(["fc-cache", "-f", "-v"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-# 載入字型給 Matplotlib 使用
-font_prop = fm.FontProperties(fname=font_path_local) if os.path.exists(font_path_local) else fm.FontProperties()
+if platform.system() == "Linux":
+    print("正在為 GitHub 虛擬主機安裝 Linux 系統原生中文字型 (fonts-noto-cjk)...")
+    subprocess.run(["sudo", "apt-get", "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["sudo", "apt-get", "install", "-y", "fonts-noto-cjk"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print("✅ 系統中文字型包安裝完畢！")
 
 # ==========================================
 # 2. 讀取金鑰與初始化
@@ -113,7 +92,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據 (38檔名單) 與暴力 K 線過濾
+# 4. 抓取數據與暴力 K 線過濾 (抓 15 天留 5 天)
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -178,8 +157,8 @@ for info in stock_pool:
     
     try:
         stock = yf.Ticker(ticker)
-        # 抓取較長天數，並強制去除空值，保證資料絕對連續
-        hist = stock.history(period="1mo") 
+        # 🌟 終極暴力抓取：往前抓 15 天，然後清掉所有 NaN
+        hist = stock.history(period="15d") 
         if not hist.empty and 'Close' in hist.columns:
             df_valid = hist.dropna(subset=['Close', 'Volume'])
             if not df_valid.empty:
@@ -191,7 +170,9 @@ for info in stock_pool:
                 trading_value_m = round((current_vol * current_price * rate) / 1000000, 2)
                 
                 if len(closes) >= 2:
+                    # 純粹數學計算
                     pcts = [((closes[i] - closes[i-1]) / closes[i-1]) * 100 for i in range(1, len(closes))]
+                    # 確保只拿最後 5 天
                     last_5 = pcts[-5:]
                     while len(last_5) < 5: last_5.insert(0, 0.0)
                     stock_real_price_history[ticker] = last_5
@@ -266,9 +247,9 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
     except: pass
 
 # ==========================================
-# 5. 繪製 Page 1: 純淨 Matplotlib 蜂巢版 (保證字體不爆炸)
+# 5. 繪製 Page 1: 回歸 Plotly 完美蜂巢圖 (杜絕 HTML，確保安全)
 # ==========================================
-print("正在繪製 Page 1 (Matplotlib)...")
+print("正在繪製 Page 1...")
 df_plot = pd.DataFrame(today_results)
 df_plot = df_plot.sort_values(by='當前總聲量', ascending=False).reset_index(drop=True)
 
@@ -283,58 +264,78 @@ for row_idx, count in enumerate(pattern):
 coords = [{"x": x, "y": y, "dist": (x - 0)**2 + (y + 6.5)**2} for x, y in zip(x_coords, y_coords)]
 coords = sorted(coords, key=lambda k: k["dist"])
 
-fig1, ax1 = plt.subplots(figsize=(12, 12), facecolor='#1e1e1e')
-ax1.set_facecolor('#1e1e1e')
+limit = min(len(df_plot), 38)
+df_plot = df_plot.iloc[:limit]
+df_plot['X坐標'] = [c["x"] for c in coords[:limit]]
+df_plot['Y坐標'] = [c["y"] for c in coords[:limit]]
 
-# 繪製有機黃金流體結界
-pts = np.array([[0.0, -2.5], [3.5, -3.0], [4.8, -6.5], [3.5, -9.8], [1.5, -10.5], 
-                [0.0, -10.2], [-2.5, -10.0], [-4.5, -8.0], [-4.8, -5.0], [-3.0, -3.0], [0.0, -2.5]])
-tck, u = splprep([pts[:,0], pts[:,1]], s=0, per=True)
-out = splev(np.linspace(0, 1, 500), tck)
-ax1.plot(out[0], out[1], color='#FFD700', linewidth=5, zorder=1)
+sizes, line_widths, line_colors, text_labels, text_colors, text_sizes = [], [], [], [], [], []
 
-# 繪製泡泡與文字
-for i, row in df_plot.iloc[:38].iterrows():
-    x, y = coords[i]['x'], coords[i]['y']
-    pct = row['今日漲跌幅']
+for i, row in df_plot.iterrows():
     rank = i + 1
+    # 控制尺寸 (完美比例)
+    sizes.append(65 if rank <= 3 else (58 if rank <= 10 else 48))
+    line_widths.append(6 if rank <= 3 else (5 if rank <= 10 else 3))
     
-    r = 1.45 if rank <= 10 else 1.2
-    lw = 4 if rank <= 10 else 2.5
-    color = '#ff4d4d' if pct > 0 else ('#00cc96' if pct < 0 else '#888888')
+    # 控制漲跌顏色
+    pct = row['今日漲跌幅']
+    line_colors.append('#ff4d4d' if pct > 0 else ('#00cc96' if pct < 0 else '#888888'))
     
-    # 泡泡本體
-    circle = plt.Circle((x, y), radius=r, facecolor='#2C2C2C', edgecolor=color, linewidth=lw, zorder=2)
-    ax1.add_patch(circle)
-    
-    # 內文 (加入價格漲跌顯示)
+    # 🌟 絕對純淨文字 (沒有 HTML)，加入漲跌幅顯示
     pct_str = f"+{pct:.1f}%" if pct > 0 else f"{pct:.1f}%"
-    txt = f"{row['名稱']}\n{row['代號']}\n{pct_str}"
+    text_labels.append(f"{row['名稱']}<br>{row['代號']}<br>{pct_str}")
     
-    text_color = 'white' if rank <= 10 else '#C0C0C0'
-    fs = 11 if rank <= 10 else 9
-    
-    ax1.text(x, y, txt, color=text_color, ha='center', va='center', 
-             fontsize=fs, fontproperties=font_prop, fontweight='bold', zorder=3)
+    text_colors.append("white" if rank <= 10 else "#A0A0A0")
+    text_sizes.append(15 if rank <= 10 else 12)
 
-ax1.set_xlim(-14, 14)
-ax1.set_ylim(-16.5, 2.5)
-ax1.axis('off')
+df_plot['MarkerSize'] = sizes
+df_plot['LineWidth'] = line_widths
+df_plot['LineColor'] = line_colors
+df_plot['圖表標籤'] = text_labels
+df_plot['TextColor'] = text_colors
+df_plot['TextSize'] = text_sizes
 
-# 標題與註解
-ax1.text(0, 1.5, f"【Page 1】全市場聲量熱點蜂巢圖\n更新時間: {current_time}", 
-         fontproperties=font_prop, color='white', fontsize=16, ha='center', fontweight='bold')
-ax1.text(-8, -14.5, "🔴 紅色外框：收盤上漲", fontproperties=font_prop, color='#ff4d4d', fontsize=13, ha='center', fontweight='bold')
-ax1.text(0, -14.5, "🟢 綠色外框：收盤下跌", fontproperties=font_prop, color='#00cc96', fontsize=13, ha='center', fontweight='bold')
-ax1.text(8, -14.5, "⚪ 灰色外框：平盤無變化", fontproperties=font_prop, color='#888888', fontsize=13, ha='center', fontweight='bold')
-ax1.text(0, -15.8, "🔆 不規則金色框線：代表前十名最熱門聲量集中區 (聲量越大越集中中央與上方)", 
-         fontproperties=font_prop, color='#FFD700', fontsize=13, ha='center', fontweight='bold')
+fig1 = go.Figure()
 
-plt.tight_layout()
-plt.savefig("radar_page1.jpg", facecolor='#1e1e1e', dpi=150, bbox_inches='tight')
+# 黃金流體結界 (scipy Spline)
+pts = np.array([
+    [0.0, -2.5], [3.5, -3.0], [4.8, -6.5], [3.5, -9.8], [1.5, -10.5], 
+    [0.0, -10.2], [-2.5, -10.0], [-4.5, -8.0], [-4.8, -5.0], [-3.0, -3.0], [0.0, -2.5]
+])
+tck, u = splprep([pts[:,0], pts[:,1]], s=0, per=True)
+unew = np.linspace(0, 1, 200)
+out = splev(unew, tck)
+path = f"M {out[0][0]},{out[1][0]}"
+for px, py in zip(out[0][1:], out[1][1:]): path += f" L {px},{py}"
+path += " Z"
+fig1.add_shape(type="path", path=path, line=dict(color="#FFD700", width=4), layer="below")
+
+# 🌟 回歸 Plotly 原生渲染 (絕對不會破圖)
+fig1.add_trace(go.Scatter(
+    x=df_plot['X坐標'], y=df_plot['Y坐標'], mode='markers+text',
+    marker=dict(size=df_plot['MarkerSize'], color='#2C2C2C', line=dict(width=df_plot['LineWidth'], color=df_plot['LineColor'])),
+    text=df_plot['圖表標籤'], textposition='middle center',
+    textfont=dict(size=df_plot['TextSize'], color=df_plot['TextColor'], family="Noto Sans CJK TC, sans-serif"),
+    hoverinfo='none'
+))
+
+fig1.update_xaxes(visible=False, range=[-14, 14]) 
+fig1.update_yaxes(visible=False, range=[-15.5, 1.5]) 
+fig1.update_layout(
+    title=f"【Page 1】全市場聲量熱點蜂巢圖<br>更新時間: {current_time}",
+    width=1200, height=1100, margin=dict(t=100, b=120, l=40, r=40),
+    template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
+)
+
+fig1.add_annotation(
+    text="🔴 <b>紅色外框：</b>收盤上漲　　🟢 <b>綠色外框：</b>收盤下跌　　⚪ <b>灰色外框：</b>平盤無變化<br><br>🔆 <b>不規則金色框線：</b>代表前十名最熱門聲量集中區 (聲量越大越集中中央與上方)", 
+    xref="paper", yref="paper", x=0.5, y=-0.1, showarrow=False, font=dict(size=17, color="#E0E0E0"), xanchor="center", yanchor="top"
+)
+
+fig1.write_image("radar_page1.jpg", scale=2)
 
 # ==========================================
-# 6. 繪製 Page 2: 乾淨 Plotly K 線矩陣 (無 HTML 版)
+# 6. 繪製 Page 2: 乾淨 Plotly K 線矩陣
 # ==========================================
 print("正在計算五日歷史軌跡...")
 columns = ["日期", "代號", "名稱", "市場", "收盤價", "成交金額_百萬美元", "總聲量"]
@@ -398,7 +399,7 @@ fig2.update_layout(
     title="【Page 2】五日動能與真實漲跌幅矩陣", 
     template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20), 
     height=150 + len(stock_pool) * 40, 
-    font=dict(family="Noto Sans TC, sans-serif")
+    font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 fig2.write_image("trend_page2.jpg", scale=2)
 
