@@ -92,7 +92,7 @@ def check_upcoming_earnings(ticker_list):
     return upcoming
 
 # ==========================================
-# 4. 抓取數據與暴力 K 線過濾 (修復上櫃股票抓取問題)
+# 4. 抓取數據與暴力 K 線過濾 
 # ==========================================
 stock_pool = [
     {"ticker": "NVDA", "name": "輝達", "market": "US", "keywords": ["NVDA"]},
@@ -150,7 +150,6 @@ for info in stock_pool:
     ticker, name, market, kw = info["ticker"], info["name"], info["market"], info["keywords"][0]
     rate = exchange_rates.get(market, 1.0)
     
-    # 🌟 自動轉換 YFinance 上櫃代號後綴，解決旺矽/藥華藥抓不到資料的問題
     yf_ticker = ticker
     if ticker in ["6223.TW", "6446.TW"]:
         yf_ticker = ticker.replace(".TW", ".TWO")
@@ -163,7 +162,6 @@ for info in stock_pool:
     
     try:
         stock = yf.Ticker(yf_ticker)
-        # 往前抓 15 天，然後清掉所有 NaN
         hist = stock.history(period="15d") 
         if not hist.empty and 'Close' in hist.columns:
             df_valid = hist.dropna(subset=['Close', 'Volume'])
@@ -330,11 +328,31 @@ fig1.update_layout(
     template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 
-# 🌟 優化註解排版：黃金流體在上，紅綠灰顏色定義在下
+# 🌟 優化註解排版：完整還原圖例說明
+annotation_html = """
+<div style='text-align: left; line-height: 1.8;'>
+    <span style='color: white;'>中心顏色 - 情緒（深灰色統一，邊框框線熱度顯示）：</span><br>
+    <span style='color: #ff4d4d;'>🔴 偏多</span>　<span style='color: #00cc96;'>🟢 震盪</span>　<span style='color: #888888;'>⚪ 中立</span>　<span style='color: #AB63FA;'>🟣 偏空</span>
+</div>
+"""
+
+annotation_html2 = """
+<div style='text-align: left; line-height: 1.8;'>
+    <span style='color: #FFD700;'>不規則金色流體框線：</span><span style='color: white;'>代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)</span><br>
+    <span style='color: white;'>泡泡邊框顏色：代表動能狀態</span>
+</div>
+"""
+
 fig1.add_annotation(
-    text="🔆 <b>不規則金色流體框線：</b>代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)<br><br>🔴 <b>紅色外框：</b>收盤上漲　　🟢 <b>綠色外框：</b>收盤下跌　　⚪ <b>灰色外框：</b>平盤無變化", 
-    xref="paper", yref="paper", x=0.5, y=-0.1, showarrow=False, font=dict(size=17, color="#E0E0E0"), xanchor="center", yanchor="top"
+    text=annotation_html, xref="paper", yref="paper", x=0.05, y=-0.1, 
+    showarrow=False, font=dict(size=14), xanchor="left", yanchor="top"
 )
+
+fig1.add_annotation(
+    text=annotation_html2, xref="paper", yref="paper", x=0.5, y=-0.1, 
+    showarrow=False, font=dict(size=14), xanchor="left", yanchor="top"
+)
+
 
 fig1.write_image("radar_page1.jpg", scale=2)
 
