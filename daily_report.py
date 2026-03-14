@@ -18,7 +18,7 @@ import platform
 import subprocess
 from scipy.interpolate import splprep, splev
 
-print("啟動【跨國巨頭 38 檔：完美蜂巢 & 終極API防禦版】法人戰情機器人...")
+print("啟動【跨國巨頭 41 檔：完美蜂巢 & 終極API防禦版】法人戰情機器人...")
 
 # ==========================================
 # 1. 系統級安裝中文字型 (防禦亂碼方塊)
@@ -116,10 +116,13 @@ stock_pool = [
     {"ticker": "JPM", "name": "摩根大通", "market": "US", "keywords": ["JPM"]},
     {"ticker": "BRK-B", "name": "波克夏", "market": "US", "keywords": ["BRK-B"]},
     {"ticker": "COIN", "name": "Coinbase", "market": "US", "keywords": ["COIN"]},
+    {"ticker": "CRCL", "name": "Circle", "market": "US", "keywords": ["CRCL"]},
+    {"ticker": "GLW", "name": "Corning", "market": "US", "keywords": ["GLW", "康寧"]},
+    {"ticker": "TER", "name": "Teradyne", "market": "US", "keywords": ["TER", "泰瑞達"]},
     {"ticker": "2330.TW", "name": "台積電", "market": "TW", "keywords": ["台積電"]},
     {"ticker": "2317.TW", "name": "鴻海", "market": "TW", "keywords": ["鴻海"]},
     {"ticker": "2382.TW", "name": "廣達", "market": "TW", "keywords": ["廣達"]},
-    {"ticker": "3231.TW", "name": "緯創", "market": "TW", "keywords": ["緯創"]},
+    {"ticker": "2454.TW", "name": "聯發科", "market": "TW", "keywords": ["聯發科"]},
     {"ticker": "3037.TW", "name": "欣興", "market": "TW", "keywords": ["欣興"]},
     {"ticker": "2308.TW", "name": "台達電", "market": "TW", "keywords": ["台達電"]},
     {"ticker": "3017.TW", "name": "奇鋐", "market": "TW", "keywords": ["奇鋐"]},
@@ -127,7 +130,7 @@ stock_pool = [
     {"ticker": "2383.TW", "name": "台光電", "market": "TW", "keywords": ["台光電"]},
     {"ticker": "2408.TW", "name": "南亞科", "market": "TW", "keywords": ["南亞科"]},
     {"ticker": "6223.TW", "name": "旺矽", "market": "TW", "keywords": ["旺矽"]},
-    {"ticker": "6446.TW", "name": "藥華藥", "market": "TW", "keywords": ["藥華藥"]},
+    {"ticker": "3443.TW", "name": "創意", "market": "TW", "keywords": ["創意"]},
     {"ticker": "005930.KS", "name": "三星電子", "market": "KR", "keywords": ["三星", "005930"]},
     {"ticker": "5801.T", "name": "古河電工", "market": "JP", "keywords": ["古河電工", "5801"]},
     {"ticker": "5016.T", "name": "JX金屬", "market": "JP", "keywords": ["JX金屬", "5016"]},
@@ -151,7 +154,7 @@ for info in stock_pool:
     rate = exchange_rates.get(market, 1.0)
     
     yf_ticker = ticker
-    if ticker in ["6223.TW", "6446.TW"]:
+    if ticker in ["6223.TW"]: # 處理旺矽上櫃代號
         yf_ticker = ticker.replace(".TW", ".TWO")
         
     if market == "US": us_tickers_for_earnings.append(yf_ticker)
@@ -172,7 +175,7 @@ for info in stock_pool:
                 closes = df_close['Close'].tolist()
                 vols = df_close['Volume'].fillna(0).tolist() if 'Volume' in df_close.columns else [0]*len(closes)
                 
-        # --- 🌟 防護網 2: 終極 API 備援 (專治藥華藥抓不到的問題) ---
+        # --- 防護網 2: 終極 API 備援 ---
         if len(closes) < 2:
             try:
                 url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_ticker}?range=1mo&interval=1d"
@@ -268,13 +271,14 @@ if GEMINI_API_KEY and hottest_stock["hype"] > 0 and len(hottest_stock["titles"])
     except: pass
 
 # ==========================================
-# 5. 繪製 Page 1: 完美排版蜂巢圖 
+# 5. 繪製 Page 1: 完美排版蜂巢圖 (適配 41 檔)
 # ==========================================
 print("正在繪製 Page 1...")
 df_plot = pd.DataFrame(today_results)
 df_plot = df_plot.sort_values(by='當前總聲量', ascending=False).reset_index(drop=True)
 
-pattern = [5, 6, 7, 8, 7, 5] 
+# 🌟 陣列放大，足以容納 41 個座標空間
+pattern = [6, 7, 8, 9, 8, 7] 
 x_coords, y_coords = [], []
 for row_idx, count in enumerate(pattern):
     x_offset = - (count * 3.0) / 2.0
@@ -282,10 +286,11 @@ for row_idx, count in enumerate(pattern):
         x_coords.append(x_offset + i * 3.0 + 1.5)
         y_coords.append(- row_idx * 2.6)
 
+# 中心座標定為 y = -6.5
 coords = [{"x": x, "y": y, "dist": (x - 0)**2 + (y + 6.5)**2} for x, y in zip(x_coords, y_coords)]
 coords = sorted(coords, key=lambda k: k["dist"])
 
-limit = min(len(df_plot), 38)
+limit = min(len(df_plot), 41)
 df_plot = df_plot.iloc[:limit]
 df_plot['X坐標'] = [c["x"] for c in coords[:limit]]
 df_plot['Y坐標'] = [c["y"] for c in coords[:limit]]
@@ -338,14 +343,14 @@ fig1.add_trace(go.Scatter(
 fig1.update_xaxes(visible=False, range=[-14, 14]) 
 fig1.update_yaxes(visible=False, range=[-15.5, 1.5]) 
 
-# 🌟 大幅增加底部 Margin (b=180)，徹底解決文字被吃掉的問題
+# 大幅增加底部 Margin (b=180)，徹底解決文字被吃掉的問題
 fig1.update_layout(
-    title=f"【Page 1】全市場聲量熱點蜂巢圖<br>更新時間: {current_time}",
+    title=f"【Page 1】全市場聲量熱點蜂巢圖 (41 檔)<br>更新時間: {current_time}",
     width=1200, height=1150, margin=dict(t=100, b=180, l=40, r=40),
     template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 
-# 🌟 絕對獨立的兩行註解：利用 y 座標分開 (-0.06 與 -0.12)，絕不擠壓
+# 絕對獨立的兩行註解：利用 y 座標分開 (-0.06 與 -0.12)，絕不擠壓
 fig1.add_annotation(
     text="🔆 不規則金色流體框線：代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)", 
     xref="paper", yref="paper", x=0.5, y=-0.06, 
