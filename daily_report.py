@@ -154,7 +154,7 @@ for info in stock_pool:
     rate = exchange_rates.get(market, 1.0)
     
     yf_ticker = ticker
-    if ticker in ["6223.TW"]: # 處理旺矽上櫃代號
+    if ticker in ["6223.TW"]:
         yf_ticker = ticker.replace(".TW", ".TWO")
         
     if market == "US": us_tickers_for_earnings.append(yf_ticker)
@@ -166,7 +166,6 @@ for info in stock_pool:
     try:
         closes, vols = [], []
         
-        # --- 防護網 1: 正常 YFinance 抓取 ---
         stock = yf.Ticker(yf_ticker)
         hist = stock.history(period="1mo") 
         if not hist.empty and 'Close' in hist.columns:
@@ -175,7 +174,6 @@ for info in stock_pool:
                 closes = df_close['Close'].tolist()
                 vols = df_close['Volume'].fillna(0).tolist() if 'Volume' in df_close.columns else [0]*len(closes)
                 
-        # --- 防護網 2: 終極 API 備援 ---
         if len(closes) < 2:
             try:
                 url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_ticker}?range=1mo&interval=1d"
@@ -190,7 +188,6 @@ for info in stock_pool:
             except:
                 pass
 
-        # --- 結算價格與漲跌幅 ---
         if len(closes) >= 2:
             current_price = float(closes[-1])
             current_vol = float(vols[-1]) if vols else 0.0
@@ -277,7 +274,6 @@ print("正在繪製 Page 1...")
 df_plot = pd.DataFrame(today_results)
 df_plot = df_plot.sort_values(by='當前總聲量', ascending=False).reset_index(drop=True)
 
-# 🌟 陣列放大，足以容納 41 個座標空間
 pattern = [6, 7, 8, 9, 8, 7] 
 x_coords, y_coords = [], []
 for row_idx, count in enumerate(pattern):
@@ -286,7 +282,6 @@ for row_idx, count in enumerate(pattern):
         x_coords.append(x_offset + i * 3.0 + 1.5)
         y_coords.append(- row_idx * 2.6)
 
-# 中心座標定為 y = -6.5
 coords = [{"x": x, "y": y, "dist": (x - 0)**2 + (y + 6.5)**2} for x, y in zip(x_coords, y_coords)]
 coords = sorted(coords, key=lambda k: k["dist"])
 
@@ -342,21 +337,17 @@ fig1.add_trace(go.Scatter(
 
 fig1.update_xaxes(visible=False, range=[-14, 14]) 
 fig1.update_yaxes(visible=False, range=[-15.5, 1.5]) 
-
-# 大幅增加底部 Margin (b=180)，徹底解決文字被吃掉的問題
 fig1.update_layout(
     title=f"【Page 1】全市場聲量熱點蜂巢圖 (41 檔)<br>更新時間: {current_time}",
     width=1200, height=1150, margin=dict(t=100, b=180, l=40, r=40),
     template="plotly_dark", showlegend=False, font=dict(family="Noto Sans CJK TC, sans-serif")
 )
 
-# 絕對獨立的兩行註解：利用 y 座標分開 (-0.06 與 -0.12)，絕不擠壓
 fig1.add_annotation(
     text="🔆 不規則金色流體框線：代表全市場前十名最熱門聲量討論核心集中區 (聲量越大越靠近中央上方)", 
     xref="paper", yref="paper", x=0.5, y=-0.06, 
     showarrow=False, font=dict(size=17, color="#FFD700"), xanchor="center", yanchor="top"
 )
-
 fig1.add_annotation(
     text="🔴 紅色外框：收盤上漲　　🟢 綠色外框：收盤下跌　　⚪ 灰色外框：平盤無變化", 
     xref="paper", yref="paper", x=0.5, y=-0.12, 
@@ -435,7 +426,53 @@ fig2.update_layout(
 fig2.write_image("trend_page2.jpg", scale=2)
 
 # ==========================================
-# 7. 上傳圖床並發送 LINE 訊息
+# 7. 事件驅動：跨產業焦點展會行事曆 (自動過濾未來90天)
+# ==========================================
+print("正在編譯展會行事曆...")
+tech_events = [
+    # --- 科技 / AI / 半導體 ---
+    {"name": "[AI/半導體] 輝達 NVIDIA GTC", "start": "2026-03-16", "end": "2026-03-19", "location": "加州聖荷西"},
+    {"name": "[光通訊] OFC 光纖通訊展", "start": "2026-03-17", "end": "2026-03-19", "location": "加州洛杉磯"},
+    {"name": "[資安] RSA 全球資安大會", "start": "2026-03-23", "end": "2026-03-26", "location": "加州舊金山"},
+    {"name": "[軟體開發] Google I/O", "start": "2026-05-19", "end": "2026-05-20", "location": "加州山景城"},
+    {"name": "[軟體/雲端] 微軟 Microsoft Build", "start": "2026-06-02", "end": "2026-06-03", "location": "加州舊金山"},
+    {"name": "[消費電子] COMPUTEX 台北國際電腦展", "start": "2026-06-02", "end": "2026-06-05", "location": "台灣台北"},
+    {"name": "[蘋果生態] 蘋果 WWDC", "start": "2026-06-08", "end": "2026-06-12", "location": "加州庫比蒂諾 (預估)"},
+    
+    # --- 生技醫療 (Biotech/Medical) ---
+    {"name": "[生技/新藥] AACR 美國癌症研究協會", "start": "2026-04-10", "end": "2026-04-15", "location": "紐奧良"},
+    {"name": "[生技/臨床] ASCO 美國臨床腫瘤學會", "start": "2026-06-05", "end": "2026-06-09", "location": "芝加哥"},
+    {"name": "[生技/商貿] BIO International 北美生技展", "start": "2026-06-08", "end": "2026-06-11", "location": "聖地牙哥"},
+    
+    # --- 太空與航太 (Space/Aerospace) ---
+    {"name": "[太空/防務] Space Symposium 美國太空論壇", "start": "2026-04-13", "end": "2026-04-16", "location": "科羅拉多泉"},
+    {"name": "[航太/軍工] ILA 柏林國際航空太空展", "start": "2026-06-10", "end": "2026-06-14", "location": "德國柏林"},
+    
+    # --- 綠能與基建 (Green Energy) ---
+    {"name": "[綠能/電網] CLEANPOWER 美國離岸風電與綠能展", "start": "2026-05-18", "end": "2026-05-21", "location": "明尼亞波利斯"}
+]
+
+today_date = datetime.now(tw_tz).date()
+future_3_months = today_date + timedelta(days=90)
+
+upcoming_events = []
+for event in tech_events:
+    try:
+        event_end = datetime.strptime(event["end"], "%Y-%m-%d").date()
+        event_start = datetime.strptime(event["start"], "%Y-%m-%d").date()
+        
+        # 篩選條件：展覽尚未結束，且開始日期在未來90天內
+        if event_end >= today_date and event_start <= future_3_months:
+            start_md = event_start.strftime("%m/%d")
+            end_md = event_end.strftime("%m/%d")
+            upcoming_events.append(f"📍 {event['name']} ({start_md}~{end_md} | {event['location']})")
+    except:
+        pass
+
+events_msg = "🗓️ 【未來三個月焦點產業展會】\n" + ("\n".join(upcoming_events) if upcoming_events else "近期無重大展會。")
+
+# ==========================================
+# 8. 上傳圖床並發送 LINE 訊息
 # ==========================================
 def upload_image(file_path):
     try:
@@ -457,12 +494,12 @@ if img_url_1 or img_url_2:
     smart_money = [row['名稱'] for row in today_results if "🤫 右下：低調吸金" in row['象限洞察']]
     money_msg = f"🤫 特別吸金：{', '.join(smart_money)}" if smart_money else "🤫 特別吸金：無特別低調吸金標的"
     
-    final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{ai_insight_msg}\n\n🕒 資料產出時間：{current_time}\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
+    final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{events_msg}\n\n{ai_insight_msg}\n\n🕒 資料產出時間：{current_time}\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
     
     messages = [{"type": "text", "text": final_text}]
     if img_url_1: messages.append({"type": "image", "originalContentUrl": img_url_1, "previewImageUrl": img_url_1})
     if img_url_2: messages.append({"type": "image", "originalContentUrl": img_url_2, "previewImageUrl": img_url_2})
     
     requests.post("https://api.line.me/v2/bot/message/push", headers={"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, json={"to": LINE_USER_ID, "messages": messages}, timeout=10)
-    print("✅ LINE 雙圖表訊息發送完畢！")
+    print("✅ LINE 雙圖表與展會訊息發送完畢！")
 else: print("❌ 圖片上傳失敗，無法發送 LINE。")
