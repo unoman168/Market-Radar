@@ -12,7 +12,8 @@ import plotly.graph_objects as go
 import feedparser
 from google.oauth2.service_account import Credentials
 import gspread
-from google import genai
+# 初始化時應該長這樣
+client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 import praw
 import platform
 import subprocess
