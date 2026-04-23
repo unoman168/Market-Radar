@@ -475,31 +475,31 @@ events_msg = "🗓️ 【未來三個月焦點產業展會】\n" + ("\n".join(up
 # 8. 上傳圖床並發送 LINE 訊息
 # ==========================================
 def upload_image(file_path):
-    # --- 備援 1: ImgBB (相對穩定) ---
+    try:
+        res = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"}, files={"fileToUpload": open(file_path, "rb")}, timeout=15)
+        if res.status_code == 200: return res.text
+    except: pass
     try:
         import base64
-        with open(file_path, "rb") as f:
-            img_data = base64.b64encode(f.read())
-        # 這裡建議在 GitHub Secrets 加入 IMGBB_API_KEY
-        # 暫時用 ImgBB 的免金鑰接口或確保你有 key
-        api_key = "你的_IMGBB_API_KEY_或者換成私有空間" 
-        res = requests.post("https://api.imgbb.com/1/upload", 
-                            data={"key": "6d207e02198a847aa98d0a2a901485a5", "image": img_data}, 
-                            timeout=20)
-        if res.status_code == 200:
-            return res.json()['data']['url']
-    except Exception as e:
-        print(f"ImgBB 上傳失敗: {e}")
+        with open(file_path, "rb") as f: img_data = base64.b64encode(f.read()).decode('utf-8')
+        res = requests.post("https://freeimage.host/api/1/upload", data={"key": "6d207e02198a847aa98d0a2a901485a5", "action": "upload", "source": img_data, "format": "json"}, timeout=15)
+        if res.status_code == 200: return res.json()['image']['url']
+    except: return None
 
-    # --- 備援 2: Catbox ---
-    try:
-        res = requests.post("https://catbox.moe/user/api.php", 
-                            data={"reqtype": "fileupload"}, 
-                            files={"fileToUpload": open(file_path, "rb")}, 
-                            timeout=20)
-        if res.status_code == 200:
-            return res.text
-    except Exception as e:
-        print(f"Catbox 上傳失敗: {e}")
-        
-    return None
+print("正在上傳圖片...")
+img_url_1 = upload_image("radar_page1.jpg")
+img_url_2 = upload_image("trend_page2.jpg")
+
+if img_url_1 or img_url_2:
+    smart_money = [row['名稱'] for row in today_results if "🤫 右下：低調吸金" in row['象限洞察']]
+    money_msg = f"🤫 特別吸金：{', '.join(smart_money)}" if smart_money else "🤫 特別吸金：無特別低調吸金標的"
+    
+    final_text = f"🌞 早安！為您送上今日全市場動能雷達。\n\n{money_msg}\n\n{earnings_msg}\n\n{events_msg}\n\n{ai_insight_msg}\n\n🕒 資料產出時間：{current_time}\n🏷️ 檢索標籤：#市場動能 #法人籌碼 #量化交易 #台股 #美股 #日股"
+    
+    messages = [{"type": "text", "text": final_text}]
+    if img_url_1: messages.append({"type": "image", "originalContentUrl": img_url_1, "previewImageUrl": img_url_1})
+    if img_url_2: messages.append({"type": "image", "originalContentUrl": img_url_2, "previewImageUrl": img_url_2})
+    
+    requests.post("https://api.line.me/v2/bot/message/push", headers={"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, json={"to": LINE_USER_ID, "messages": messages}, timeout=10)
+    print("✅ LINE 雙圖表與展會訊息發送完畢！")
+else: print("❌ 圖片上傳失敗，無法發送 LINE。")
